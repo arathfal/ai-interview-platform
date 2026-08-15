@@ -150,6 +150,7 @@ module Api
       def set_portfolio
         # Routes use :id for both session-based and direct portfolio lookups
         # If called from session context, look up via session
+        # Otherwise use current_tenant scope (TenantScoped default_scope)
         if @session
           @portfolio = @session.portfolio
         else
