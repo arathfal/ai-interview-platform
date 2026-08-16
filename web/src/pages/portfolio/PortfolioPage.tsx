@@ -257,11 +257,17 @@ export default function PortfolioPage() {
                     <SelectValue placeholder="Choose vacancy..." />
                   </SelectTrigger>
                   <SelectContent>
-                    {vacancies.map((v) => (
-                      <SelectItem key={v.id} value={String(v.id)}>
-                        {v.role_title}
+                    {vacancies.length === 0 ? (
+                      <SelectItem value="__no_vacancies__" disabled>
+                        No vacancies available
                       </SelectItem>
-                    ))}
+                    ) : (
+                      vacancies.map((v) => (
+                        <SelectItem key={v.id} value={String(v.id)}>
+                          {v.role_title}
+                        </SelectItem>
+                      ))
+                    )}
                   </SelectContent>
                 </Select>
                 <Button onClick={handleRunFitGap} disabled={!selectedVacancy}>
