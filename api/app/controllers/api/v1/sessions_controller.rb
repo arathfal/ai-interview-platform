@@ -121,9 +121,16 @@ module Api
 
         return json_response(ended: true, message: "Session already ended") if session.ended?
 
-        # No coverage re-check here. The backend WS already verified all_covered
-        # before sending preparing_to_end. Re-checking here caused false negatives
-        # (timing gap between WS detection and HTTP call) that stalled auto-end.
+        # F-06 guard: only end when the WebSocket layer persisted a fresh
+        # preparing_to_end proof (see Session#mark_preparing_to_end!).
+        # Previously the endpoint trusted any caller holding the invite token —
+        # a leaked token (referrer, history, proxy logs) could force-end an
+        # active session and generate a portfolio from a partial transcript.
+        unless session.preparing_to_end?
+          Rails.logger.warn("[audio_complete] Rejected end for session #{session.id}: no valid preparing_to_end flag")
+          return json_error("Session is not ready to end", :conflict)
+        end
+
         Sessions::EndHandler.new(session).call(reason: 'all_covered')
         json_response(ended: true, message: "Session ended")
       end
