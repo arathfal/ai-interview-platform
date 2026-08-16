@@ -9,7 +9,7 @@ import { sessionsApi } from "@/services/sessions";
 import { vacanciesApi } from "@/services/vacancies";
 import { portfoliosApi } from "@/services/portfolios";
 import { usePolling } from "@/hooks/usePolling";
-import { ArrowLeft, Download, Loader2, RefreshCw, Zap, FileText } from "lucide-react";
+import { ArrowLeft, Download, Loader2, RefreshCw, Zap, FileText, AlertTriangle } from "lucide-react";
 import type { Portfolio, AssessorOverride, Vacancy } from "@/types";
 
 export default function PortfolioPage() {
@@ -128,7 +128,7 @@ export default function PortfolioPage() {
             <FileText className="h-3.5 w-3.5" />
             Transcript
           </Link>
-          {!generating && portfolio && (
+          {!generating && portfolio?.generation_status === "complete" && (
             <>
               <Button
                 variant="outline"
@@ -183,8 +183,25 @@ export default function PortfolioPage() {
         </div>
       )}
 
+      {/* Partial state — some skills saved, some failed */}
+      {!generating && portfolio?.generation_status === "partial" && (
+        <div className="border border-amber-400/50 bg-amber-50 rounded-lg p-4 space-y-1">
+          <div className="flex items-center gap-2 text-amber-800">
+            <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <p className="text-sm font-medium">Portfolio partially generated</p>
+          </div>
+          <p className="text-xs text-amber-800/80 pl-6">
+            Some skills could not be generated.{" "}
+            {portfolio.generation_error
+              ? `Details: ${portfolio.generation_error}`
+              : "The AI returned incomplete data for some skills. The skills below are still valid."}
+          </p>
+        </div>
+      )}
+
       {/* Ready state */}
-      {!generating && portfolio?.generation_status === "complete" && (
+      {!generating &&
+        (portfolio?.generation_status === "complete" || portfolio?.generation_status === "partial") && (
         <>
           {/* Configured skills */}
           <div className="space-y-3">
@@ -229,26 +246,36 @@ export default function PortfolioPage() {
             </>
           )}
 
-          <Separator />
+          {portfolio?.generation_status === "complete" && (
+            <>
+              <Separator />
 
-          {/* Fit/Gap */}
-          <div className="flex items-center gap-3">
-            <Select value={selectedVacancy} onValueChange={setSelectedVacancy}>
-              <SelectTrigger className="w-56">
-                <SelectValue placeholder="Choose vacancy..." />
-              </SelectTrigger>
-              <SelectContent>
-                {vacancies.map((v) => (
-                  <SelectItem key={v.id} value={String(v.id)}>
-                    {v.role_title}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button onClick={handleRunFitGap} disabled={!selectedVacancy}>
-              Run Fit/Gap Analysis →
-            </Button>
-          </div>
+              {/* Fit/Gap */}
+              <div className="flex items-center gap-3">
+                <Select value={selectedVacancy} onValueChange={setSelectedVacancy}>
+                  <SelectTrigger className="w-56">
+                    <SelectValue placeholder="Choose vacancy..." />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {vacancies.length === 0 ? (
+                      <SelectItem value="__no_vacancies__" disabled>
+                        No vacancies available
+                      </SelectItem>
+                    ) : (
+                      vacancies.map((v) => (
+                        <SelectItem key={v.id} value={String(v.id)}>
+                          {v.role_title}
+                        </SelectItem>
+                      ))
+                    )}
+                  </SelectContent>
+                </Select>
+                <Button onClick={handleRunFitGap} disabled={!selectedVacancy}>
+                  Run Fit/Gap Analysis →
+                </Button>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>

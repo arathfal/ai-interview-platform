@@ -110,4 +110,74 @@ RSpec.describe 'Portfolios API', type: :request do
       end
     end
   end
+
+  describe 'GET /api/v1/sessions/:id/portfolio — partial status (F-08 fix)' do
+    let(:org) do
+      Organization.create!(
+        name: 'Partial Corp',
+        scheme: 'partial-test',
+        identifier: 'partial-test',
+        host: 'partial.test.local'
+      )
+    end
+
+    let(:assessment) do
+      Current.using(tenant_id: org.id) do
+        Assessment.create!(
+          name: 'Partial Assessment',
+          tenant_id: org.id,
+          created_by: 1,
+          time_limit_min: 30
+        )
+      end
+    end
+
+    let(:session) do
+      Current.using(tenant_id: org.id) do
+        Session.create!(
+          assessment_id: assessment.id,
+          tenant_id: org.id,
+          candidate_id: 'cand-partial',
+          candidate_name: 'Partial Candidate',
+          status: 'ended'
+        )
+      end
+    end
+
+    let!(:portfolio) do
+      Current.using(tenant_id: org.id) do
+        p = Portfolio.create!(
+          session: session,
+          candidate_id: 'cand-partial',
+          generation_status: 'partial',
+          generation_error: 'Some skills could not be saved (1): TypeScript: Competency summary can\'t be blank'
+        )
+        p.portfolio_skills.create!(
+          skill_label: 'React',
+          ai_level: 3,
+          ai_confidence: 'high',
+          evidence: ['quote'],
+          competency_summary: 'Summary',
+          is_discovered: false
+        )
+        p
+      end
+    end
+
+    let(:token) do
+      JsonWebToken.encode({ user_id: 1, role: 'admin', scheme: org.scheme })
+    end
+
+    it 'returns the portfolio with partial status and its saved skills' do
+      get "/api/v1/sessions/#{session.id}/portfolio",
+          headers: { 'Authorization' => "Bearer #{token}" }
+
+      expect(response).to have_http_status(:ok)
+      json = JSON.parse(response.body)
+      expect(json['portfolio']['generation_status']).to eq('partial')
+      expect(json['portfolio']['generation_error']).to include('TypeScript')
+      expect(json['portfolio']['skills'].length).to eq(1)
+      expect(json['portfolio']['skills'].first['ai_confidence']).to eq('high')
+    end
+  end
 end
