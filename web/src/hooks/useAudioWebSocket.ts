@@ -1,6 +1,12 @@
 import { useRef, useState, useCallback, useEffect } from "react";
 import { WS_URL } from "@/services/api";
-import type { WsControlMessage, TranscriptTurn, InterviewState, InterviewSpeaker } from "@/types";
+import type {
+  WsControlMessage,
+  TranscriptTurn,
+  InterviewState,
+  InterviewSpeaker,
+  InterviewErrorInfo,
+} from "@/types";
 
 interface UseAudioWebSocketOptions {
   sessionId: number;
@@ -10,6 +16,8 @@ interface UseAudioWebSocketOptions {
   onStateChange: (state: InterviewState) => void;
   onSpeakerChange: (speaker: InterviewSpeaker) => void;
   onReconnected?: () => void;
+  /** Called when the session fails permanently (unrecoverable WS error or exhausted reconnect). */
+  onFatalError?: (error: InterviewErrorInfo) => void;
 }
 
 const RECONNECT_DELAYS = [1000, 2000, 4000];
@@ -22,6 +30,7 @@ export function useAudioWebSocket({
   onStateChange,
   onSpeakerChange,
   onReconnected,
+  onFatalError,
 }: UseAudioWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectAttemptsRef = useRef(0);
@@ -103,7 +112,15 @@ export function useAudioWebSocket({
               onStateChange("complete");
               break;
             case "error":
-              if (!msg.recoverable) onStateChange("complete");
+              if (!msg.recoverable) {
+                onFatalError?.({
+                  kind: "ws_unrecoverable",
+                  code: msg.code,
+                  message: msg.message,
+                  recoverable: false,
+                });
+                onStateChange("error");
+              }
               break;
           }
         } catch {
@@ -127,10 +144,15 @@ export function useAudioWebSocket({
           connect();
         }, RECONNECT_DELAYS[attempt]);
       } else {
-        onStateChange("complete");
+        onFatalError?.({
+          kind: "ws_connection_lost",
+          message: "The connection to the interview was lost and could not be restored.",
+          recoverable: true,
+        });
+        onStateChange("error");
       }
     };
-  }, [sessionId, token, onAudioChunk, onTranscript, onStateChange, onSpeakerChange]);
+  }, [sessionId, token, onAudioChunk, onTranscript, onStateChange, onSpeakerChange, onReconnected, onFatalError]);
 
   const send = useCallback((buffer: ArrayBuffer) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

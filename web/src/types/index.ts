@@ -176,13 +176,24 @@ export interface PaginationMeta {
 // WebSocket message types
 export type InterviewState =
   | "idle"
-  | "hardware_check"
   | "connecting"
   | "active"
   | "reconnecting"
   | "draining_audio"
   | "ending"
-  | "complete";
+  | "complete"
+  | "error";
+
+export type InterviewErrorKind = "load_failed" | "auth_failed" | "ws_unrecoverable" | "ws_connection_lost";
+
+export interface InterviewErrorInfo {
+  kind: InterviewErrorKind;
+  /** Raw error code from the backend WS message, when available. */
+  code?: string;
+  message?: string;
+  /** Whether retrying the session is expected to help. */
+  recoverable: boolean;
+}
 
 export type InterviewSpeaker = "ai" | "candidate" | null;
 
