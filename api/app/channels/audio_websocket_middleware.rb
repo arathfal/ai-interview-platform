@@ -5,6 +5,8 @@ require 'faye/websocket'
 # Rack middleware that proxies a WebSocket at /ws/sessions/:id/audio between the browser (16kHz PCM)
 # and Gemini Live (24kHz PCM). Audio is buffered in a ring buffer for reconnection replay.
 class AudioWebSocketMiddleware
+  include WebSocketAuth
+
   AUDIO_PATH_PATTERN = %r{\A/ws/sessions/([^/]+)/audio\z}
 
   MAX_RECONNECT_ATTEMPTS = 3
@@ -731,33 +733,11 @@ class AudioWebSocketMiddleware
   end
 
   def authenticate_and_load(env, session_id)
-    request = Rack::Request.new(env)
-
-    session = begin
-      invite_token = request.params['token']
-
-      if invite_token.present?
-        Session.unscoped.find_by(invite_token: invite_token)
-      else
-        auth_header = env['HTTP_AUTHORIZATION']
-        return [nil, 'Missing authorization'] unless auth_header.present?
-
-        token = auth_header.split(' ').last
-        payload = JsonWebToken.decode(token)
-        tenant_id = Organization.find_by(scheme: payload[:scheme])&.id
-        return [nil, 'Invalid tenant'] unless tenant_id
-
-        Session.unscoped.where(tenant_id: tenant_id).find_by(id: session_id)
-      end
-    rescue StandardError => e
-      return [nil, "Authentication failed: #{e.message}"]
-    end
-
-    return [nil, 'Session not found'] unless session
-    return [nil, 'Session has ended'] if session.ended?
-    return [nil, 'Session ID mismatch'] if session.id.to_s != session_id
-
-    [session, nil]
+    # Delegates to the shared WebSocketAuth concern (single source of truth with
+    # REST authz via AuthorizeApiRequest). Fixes F-02: assessor JWT path now
+    # enforces role (admin/assessor) + tenant ownership; candidate invite path
+    # requires an ACTIVE session.
+    authenticate_websocket(env, session_id)
   end
 
   def send_json(ws, **payload)
