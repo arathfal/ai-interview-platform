@@ -259,8 +259,7 @@ class AudioWebSocketMiddleware
           EM.add_timer(15) do
             next if state.ending_scheduled
             Rails.logger.warn("[AudioWS] on_model_turn_complete delayed — finalizing via closing-phrase fallback (session=#{session.id})")
-            state.ending_scheduled = true
-            send_json(browser_ws, type: 'preparing_to_end', reason: 'all_covered')
+            signal_preparing_to_end(browser_ws, state, session)
             poll_for_session_end(browser_ws, state, session, attempts: 0)
           end
         end
@@ -560,11 +559,20 @@ class AudioWebSocketMiddleware
     end
   end
 
+  # F-06: persist the timestamped proof that the WS authorized the end, set the
+  # in-memory flag, and only then signal the browser. Every path that sends
+  # preparing_to_end must go through here, so the public audio_complete endpoint
+  # can verify the transition instead of trusting any caller with the invite token.
+  def signal_preparing_to_end(browser_ws, state, session)
+    session.mark_preparing_to_end!
+    state.ending_scheduled = true
+    send_json(browser_ws, type: 'preparing_to_end', reason: 'all_covered')
+  end
+
   def finalize_after_wrap_up(browser_ws, state, session)
     state.coverage_end_timer&.cancel
-    state.ending_scheduled = true
+    signal_preparing_to_end(browser_ws, state, session)
     Rails.logger.info("[AudioWS] Wrap-up turn complete — finalizing session #{session.id}")
-    send_json(browser_ws, type: 'preparing_to_end', reason: 'all_covered')
     poll_for_session_end(browser_ws, state, session, attempts: 0)
   end
 
@@ -589,9 +597,8 @@ class AudioWebSocketMiddleware
 
   def finalize_natural_close(browser_ws, state, session)
     state.coverage_end_timer&.cancel
-    state.ending_scheduled = true
+    signal_preparing_to_end(browser_ws, state, session)
     Rails.logger.info("[AudioWS] AI closed naturally — finalizing session #{session.id}")
-    send_json(browser_ws, type: 'preparing_to_end', reason: 'all_covered')
     poll_for_session_end(browser_ws, state, session, attempts: 0)
   end
 
