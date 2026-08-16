@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2026_05_05_000002) do
+ActiveRecord::Schema[7.0].define(version: 2026_08_15_174753) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -89,8 +89,10 @@ ActiveRecord::Schema[7.0].define(version: 2026_05_05_000002) do
     t.text "culture_narrative"
     t.text "overall_narrative"
     t.datetime "generated_at", default: -> { "now()" }
+    t.bigint "tenant_id", null: false
     t.index ["portfolio_id", "vacancy_id"], name: "index_fit_gap_reports_on_portfolio_id_and_vacancy_id", unique: true
     t.index ["portfolio_id"], name: "index_fit_gap_reports_on_portfolio_id"
+    t.index ["tenant_id"], name: "index_fit_gap_reports_on_tenant_id"
     t.index ["vacancy_id"], name: "index_fit_gap_reports_on_vacancy_id"
   end
 
@@ -116,7 +118,9 @@ ActiveRecord::Schema[7.0].define(version: 2026_05_05_000002) do
     t.enum "ai_confidence", null: false, enum_type: "confidence_level"
     t.jsonb "evidence", default: [], null: false
     t.text "competency_summary", null: false
+    t.bigint "tenant_id", null: false
     t.index ["portfolio_id"], name: "index_portfolio_skills_on_portfolio_id"
+    t.index ["tenant_id"], name: "index_portfolio_skills_on_tenant_id"
     t.check_constraint "ai_level >= 1 AND ai_level <= 5", name: "chk_portfolio_skills_ai_level"
   end
 
@@ -126,8 +130,10 @@ ActiveRecord::Schema[7.0].define(version: 2026_05_05_000002) do
     t.enum "generation_status", default: "pending", null: false, enum_type: "generation_status"
     t.datetime "generated_at"
     t.text "generation_error"
+    t.bigint "tenant_id", null: false
     t.index ["candidate_id"], name: "index_portfolios_on_candidate_id"
     t.index ["session_id"], name: "index_portfolios_on_session_id", unique: true
+    t.index ["tenant_id"], name: "index_portfolios_on_tenant_id"
   end
 
   create_table "sessions", force: :cascade do |t|
@@ -208,9 +214,12 @@ ActiveRecord::Schema[7.0].define(version: 2026_05_05_000002) do
   add_foreign_key "assessment_skills", "assessments"
   add_foreign_key "assessor_overrides", "portfolio_skills"
   add_foreign_key "coverage_maps", "sessions"
+  add_foreign_key "fit_gap_reports", "organizations", column: "tenant_id"
   add_foreign_key "fit_gap_reports", "portfolios"
   add_foreign_key "fit_gap_reports", "vacancies"
+  add_foreign_key "portfolio_skills", "organizations", column: "tenant_id"
   add_foreign_key "portfolio_skills", "portfolios"
+  add_foreign_key "portfolios", "organizations", column: "tenant_id"
   add_foreign_key "portfolios", "sessions"
   add_foreign_key "sessions", "assessments"
   add_foreign_key "transcript_turns", "sessions"
