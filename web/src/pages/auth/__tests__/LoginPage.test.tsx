@@ -48,12 +48,26 @@ describe("LoginPage — tenant-explicit login (F-03)", () => {
     expect(tenantInput).toHaveAttribute("placeholder", "e.g. test-corp");
   });
 
+  it("toggles password visibility with the eye icon (UXI polish)", async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    const passwordInput = screen.getByLabelText(/^password$/i);
+    expect(passwordInput).toHaveAttribute("type", "password");
+
+    await user.click(screen.getByRole("button", { name: /show password/i }));
+    expect(passwordInput).toHaveAttribute("type", "text");
+
+    await user.click(screen.getByRole("button", { name: /hide password/i }));
+    expect(passwordInput).toHaveAttribute("type", "password");
+  });
+
   it("blocks submit when tenant is empty — no request, inline error under the Tenant field (AC#5)", async () => {
     const user = userEvent.setup();
     renderLogin();
 
     await user.type(screen.getByLabelText(/email/i), "a@b.c");
-    await user.type(screen.getByLabelText(/password/i), "secret");
+    await user.type(screen.getByLabelText(/^password$/i), "secret");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     expect(loginMock).not.toHaveBeenCalled();
@@ -77,7 +91,7 @@ describe("LoginPage — tenant-explicit login (F-03)", () => {
 
     await user.type(screen.getByLabelText(/tenant/i), "test-corp");
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
-    await user.type(screen.getByLabelText(/password/i), "Password123!");
+    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     await waitFor(() => {
@@ -99,7 +113,7 @@ describe("LoginPage — tenant-explicit login (F-03)", () => {
 
     await user.type(screen.getByLabelText(/tenant/i), "nope");
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
-    await user.type(screen.getByLabelText(/password/i), "Password123!");
+    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     expect(await screen.findByText("Unknown tenant scheme")).toBeInTheDocument();
@@ -113,7 +127,7 @@ describe("LoginPage — tenant-explicit login (F-03)", () => {
 
     await user.type(screen.getByLabelText(/tenant/i), "test-corp");
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
-    await user.type(screen.getByLabelText(/password/i), "Password123!");
+    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     expect(await screen.findByText("Invalid email or password.")).toBeInTheDocument();
