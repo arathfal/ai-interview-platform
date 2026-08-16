@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2026_08_15_174753) do
+ActiveRecord::Schema[7.0].define(version: 2026_08_16_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -21,7 +21,7 @@ ActiveRecord::Schema[7.0].define(version: 2026_08_15_174753) do
   create_enum "coverage_state", ["not_yet", "initiated", "partial", "covered"]
   create_enum "end_reason", ["manual_candidate", "manual_assessor", "all_covered", "time_ceiling", "error"]
   create_enum "fit_result", ["match", "gap", "exceed", "not_assessed"]
-  create_enum "generation_status", ["pending", "generating", "complete", "failed"]
+  create_enum "generation_status", ["pending", "generating", "complete", "failed", "partial"]
   create_enum "session_status", ["pending", "active", "ended", "failed"]
   create_enum "speaker_type", ["ai", "candidate"]
 

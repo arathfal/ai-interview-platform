@@ -25,10 +25,29 @@ module Portfolios
       prompt   = build_prompt
       response = @gemini_client.generate_content(prompt, temperature: 0.2)
 
-      save_skills(portfolio, response)
-      portfolio.update!(generation_status: 'complete', generated_at: Time.current)
+      outcome = save_skills(portfolio, response)
 
-      Rails.logger.info("[N10] Portfolio generated for session #{@session.id}")
+      if outcome[:saved].positive? && outcome[:failed].zero?
+        portfolio.update!(generation_status: 'complete', generated_at: Time.current)
+        Rails.logger.info("[N10] Portfolio generated for session #{@session.id}")
+      elsif outcome[:saved].positive?
+        # Best-effort partial save: keep the valid skills, surface what was lost.
+        portfolio.update!(
+          generation_status: 'partial',
+          generation_error:  "Some skills could not be saved (#{outcome[:failed]}): #{outcome[:errors].first(3).join('; ')}"
+        )
+        Rails.logger.warn("[N10] Portfolio partially generated for session #{@session.id}: #{outcome[:errors].join('; ')}")
+      else
+        # Everything failed: mark failed (not a fake 'partial') with a clear message.
+        # Deliberately NOT raising: status is already final and Sidekiq retries would
+        # re-ask the same LLM for the same malformed data.
+        portfolio.update!(
+          generation_status: 'failed',
+          generation_error:  "All skills failed to save: #{outcome[:errors].first(3).join('; ')}"
+        )
+        Rails.logger.error("[N10] Portfolio skills all failed for session #{@session.id}: #{outcome[:errors].join('; ')}")
+      end
+
       portfolio
     rescue => e
       portfolio&.update!(generation_status: 'failed', generation_error: e.message)
@@ -147,35 +166,73 @@ module Portfolios
       }
     end
 
+    # Saves every skill individually (best-effort): valid skills are persisted,
+    # invalid ones are collected as errors. Returns { saved:, failed:, errors: }
+    # so the caller can decide the final generation_status.
     def save_skills(portfolio, response)
       data = response.is_a?(Hash) ? response : JSON.parse(response)
 
       # Destroy existing skills (idempotent regeneration)
       portfolio.portfolio_skills.destroy_all
 
-      (data['configured_skills'] || []).each do |skill_data|
-        portfolio.portfolio_skills.create!(
+      saved  = 0
+      errors = []
+
+      build_skill_attrs(data).each do |attrs|
+        portfolio.portfolio_skills.create!(attrs)
+        saved += 1
+      rescue ActiveRecord::ActiveRecordError => e
+        errors << skill_error_message(attrs, e)
+      end
+
+      { saved: saved, failed: errors.size, errors: errors }
+    end
+
+    def build_skill_attrs(data)
+      configured = (data['configured_skills'] || []).map do |skill_data|
+        {
           skill_id:           skill_data['skill_id'],
           skill_label:        skill_data['skill_label'],
           is_discovered:      false,
           ai_level:           skill_data['level'].to_i.clamp(1, 5),
-          ai_confidence:      skill_data['confidence'],
+          ai_confidence:      normalize_confidence(skill_data['confidence']),
           evidence:           Array(skill_data['evidence']).first(3),
           competency_summary: skill_data['competency_summary']
-        )
+        }
       end
 
-      (data['discovered_skills'] || []).each do |skill_data|
-        portfolio.portfolio_skills.create!(
+      discovered = (data['discovered_skills'] || []).map do |skill_data|
+        {
           skill_id:           nil,
           skill_label:        skill_data['skill_label'],
           is_discovered:      true,
           ai_level:           skill_data['level'].to_i.clamp(1, 5),
-          ai_confidence:      skill_data['confidence'],
+          ai_confidence:      normalize_confidence(skill_data['confidence']),
           evidence:           Array(skill_data['evidence']).first(3),
           competency_summary: skill_data['competency_summary']
-        )
+        }
       end
+
+      configured + discovered
+    end
+
+    # Maps arbitrary LLM confidence output onto the confidence_level enum
+    # (high/medium/low). Blank and unknown values fall back to 'medium' so a
+    # single odd field can never sink the whole generation (F-08).
+    def normalize_confidence(raw)
+      value = raw.to_s.strip.downcase
+      return 'medium' if value.empty?
+      return 'high'   if value.start_with?('high')
+      return 'low'    if value.start_with?('low')
+      return 'medium' if value.start_with?('medium')
+
+      'medium'
+    end
+
+    def skill_error_message(attrs, error)
+      label = attrs[:skill_label].presence || attrs[:skill_id].presence || 'unknown skill'
+      details = error.respond_to?(:record) ? error.record.errors.full_messages.join(', ') : error.message
+      "#{label}: #{details}"
     end
   end
 end
