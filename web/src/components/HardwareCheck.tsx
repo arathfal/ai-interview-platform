@@ -9,7 +9,7 @@ import {
     getCurrentTime,
 } from "@/utils/hardwareUtils";
 import { Button } from "@/components/ui/button";
-import { RefreshCw, CheckCircle, XCircle, Loader2, Circle } from "lucide-react";
+import { RefreshCw, CheckCircle, XCircle, Loader2, Circle, AlertTriangle } from "lucide-react";
 
 interface HardwareCheckProps {
     onStart?: () => void;
@@ -22,6 +22,8 @@ function StateIcon({ state }: { state: ProctoringState }) {
         return <CheckCircle className="h-4 w-4 text-green-500" />;
     if (state === ProctoringState.ERROR)
         return <XCircle className="h-4 w-4 text-destructive" />;
+    if (state === ProctoringState.SKIPPED)
+        return <AlertTriangle className="h-4 w-4 text-amber-500" />;
     return <Circle className="h-4 w-4 text-muted-foreground/40" />;
 }
 
@@ -29,6 +31,7 @@ function stateLabel(state: ProctoringState) {
     if (state === ProctoringState.LOADING) return "Checking...";
     if (state === ProctoringState.PASSED) return "Passed";
     if (state === ProctoringState.ERROR) return "Failed";
+    if (state === ProctoringState.SKIPPED) return "Skipped";
     return "Waiting";
 }
 
@@ -52,7 +55,7 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
         const { osAndBrowser, internet, camera, audio, microphone } = progress;
         setAllPassed(
             osAndBrowser === ProctoringState.PASSED &&
-            internet === ProctoringState.PASSED &&
+            (internet === ProctoringState.PASSED || internet === ProctoringState.SKIPPED) &&
             camera === ProctoringState.PASSED &&
             audio === ProctoringState.PASSED &&
             microphone === ProctoringState.PASSED
@@ -122,10 +125,17 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
         if (progress.internet !== ProctoringState.LOADING) return;
         testInternetSpeed(DEFAULT_THRESHOLDS).then((result) => {
             setInternetResult(result);
+            // Passed → continue. Unavailable (own endpoint unreachable) → skip with a light warning,
+            // never block the candidate on our infrastructure. Measured-but-below-threshold → fail.
+            const canContinue = result.passed || result.unavailable;
             setProgress((p) => ({
                 ...p,
-                internet: result.passed ? ProctoringState.PASSED : ProctoringState.ERROR,
-                ...(result.passed
+                internet: result.passed
+                    ? ProctoringState.PASSED
+                    : result.unavailable
+                        ? ProctoringState.SKIPPED
+                        : ProctoringState.ERROR,
+                ...(canContinue
                     ? REQUIRE_CAMERA
                         ? { camera: ProctoringState.LOADING }
                         : { camera: ProctoringState.PASSED, microphone: ProctoringState.LOADING }
@@ -232,7 +242,8 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
                                 <StateIcon state={progress[key]} />
                                 <span className={`text-xs w-16 text-right ${progress[key] === ProctoringState.PASSED ? "text-green-600" :
                                     progress[key] === ProctoringState.ERROR ? "text-destructive" :
-                                        "text-muted-foreground"
+                                        progress[key] === ProctoringState.SKIPPED ? "text-amber-600" :
+                                            "text-muted-foreground"
                                     }`}>
                                     {stateLabel(progress[key])}
                                 </span>
@@ -240,7 +251,7 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
                         </div>
 
                         {/* Internet speed details */}
-                        {key === "internet" && internetResult && (
+                        {key === "internet" && internetResult && !internetResult.unavailable && (
                             <div className="mt-2 flex gap-3 text-xs">
                                 <span className={internetResult.download >= thresholds.minDownloadMbps ? "text-green-600" : "text-destructive"}>
                                     ↓ {internetResult.download} Mbps
@@ -252,6 +263,13 @@ const HardwareCheck: React.FC<HardwareCheckProps> = ({ onStart }) => {
                                     {internetResult.ping} ms
                                 </span>
                             </div>
+                        )}
+
+                        {/* Internet skipped — own endpoint unreachable, candidate may continue */}
+                        {key === "internet" && progress.internet === ProctoringState.SKIPPED && (
+                            <p className="mt-2 text-xs text-amber-600">
+                                Speed test unavailable — your connection couldn't be measured. You can still continue.
+                            </p>
                         )}
 
                         {/* Mic level bar */}
