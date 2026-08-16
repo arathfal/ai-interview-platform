@@ -16,19 +16,27 @@ import VoiceBars from "@/components/interview/VoiceBars";
 import InterviewTimer from "@/components/interview/InterviewTimer";
 import ConnectionStatus from "@/components/interview/ConnectionStatus";
 import TranscriptBubble from "@/components/interview/TranscriptBubble";
+import InterviewError from "@/components/interview/InterviewError";
 import { useAudioCapture } from "@/hooks/useAudioCapture";
 import { useAudioPlayback } from "@/hooks/useAudioPlayback";
 import { useAudioWebSocket } from "@/hooks/useAudioWebSocket";
 import { sessionsApi } from "@/services/sessions";
 import HardwareCheck from "@/components/HardwareCheck";
 import { CheckCircle, Mic, MicOff } from "lucide-react";
-import type { CandidateInfo, InterviewState, InterviewSpeaker, TranscriptTurn } from "@/types";
+import type {
+  CandidateInfo,
+  InterviewErrorInfo,
+  InterviewState,
+  InterviewSpeaker,
+  TranscriptTurn,
+} from "@/types";
 
 export default function InterviewPage() {
   const { token } = useParams<{ token: string }>();
   const [candidateInfo, setCandidateInfo] = useState<CandidateInfo | null>(null);
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [interviewState, setInterviewState] = useState<InterviewState>("idle");
+  const [interviewError, setInterviewError] = useState<InterviewErrorInfo | null>(null);
   const [speaker, setSpeaker] = useState<InterviewSpeaker>(null);
   const [transcript, setTranscript] = useState<Pick<TranscriptTurn, "speaker" | "text">[]>([]);
   const [hardwareCheckDone, setHardwareCheckDone] = useState(false); // kept for green banner
@@ -39,17 +47,49 @@ export default function InterviewPage() {
   const [micMuted, setMicMuted] = useState(false);
   const micMutedRef = useRef(false);
 
-  // Fetch candidate info
+  // Fetch candidate info. A failed fetch here must NOT be presented as a
+  // successful interview — surface a truthful error screen instead (F-07).
+  const [loadAttempt, setLoadAttempt] = useState(0);
   useEffect(() => {
     if (!token) return;
-    sessionsApi.getCandidateInfo(token)
+    let cancelled = false;
+    sessionsApi
+      .getCandidateInfo(token)
       .then((res) => {
+        if (cancelled) return;
         setCandidateInfo(res.data);
         setSessionId(res.data.session_id);
-        if (res.data.session_status === "ended") setInterviewState("complete");
+        if (res.data.session_status === "ended") {
+          setInterviewState("complete");
+        } else {
+          // Reset back to pre-start — relevant after a retry from the error screen.
+          setInterviewState("idle");
+        }
       })
-      .catch(() => setInterviewState("complete"));
-  }, [token]);
+      .catch((err) => {
+        if (cancelled) return;
+        // Distinguish an invalid/expired invite (401/404) from a transient
+        // network failure — the former is not worth retrying, the latter is.
+        const status = (err as { response?: { status?: number } })?.response?.status;
+        if (status === 401 || status === 404) {
+          setInterviewError({
+            kind: "auth_failed",
+            message: "This interview link isn't valid or has expired.",
+            recoverable: false,
+          });
+        } else {
+          setInterviewError({
+            kind: "load_failed",
+            message: "We couldn't load your interview details.",
+            recoverable: true,
+          });
+        }
+        setInterviewState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [token, loadAttempt]);
 
   const muteRef = useRef<(() => void) | null>(null);
   const unmuteRef = useRef<(() => void) | null>(null);
@@ -130,6 +170,16 @@ export default function InterviewPage() {
     }
   }, [scheduleAfterPlayback]);
 
+  const handleFatalError = useCallback((error: InterviewErrorInfo) => {
+    setInterviewError(error);
+    // Stop capture/playback/WS so a failed session doesn't keep the mic hot.
+    stopCaptureRef.current?.();
+    stopPlaybackRef.current?.();
+  }, []);
+
+  const stopCaptureRef = useRef<(() => void) | null>(null);
+  const stopPlaybackRef = useRef<(() => void) | null>(null);
+
   const { connect, send, sendJson, disconnect, connectionState } = useAudioWebSocket({
     sessionId: sessionId ?? 0,
     token,
@@ -138,11 +188,15 @@ export default function InterviewPage() {
     onStateChange: handleStateChange,
     onSpeakerChange: handleSpeakerChange,
     onReconnected: handleReconnected,
+    onFatalError: handleFatalError,
   });
 
   const { start: startCapture, stop: stopCapture, mute, unmute } = useAudioCapture({
     onFrame: send,
   });
+
+  stopCaptureRef.current = stopCapture;
+  stopPlaybackRef.current = stopPlayback;
 
   muteRef.current = mute;
   unmuteRef.current = unmute;
@@ -226,11 +280,35 @@ export default function InterviewPage() {
     );
   }
 
+  // ── State E2: Error ─────────────────────────────────────────────────────
+  if (interviewState === "error") {
+    return (
+      <InterviewError
+        error={interviewError ?? { kind: "load_failed", recoverable: true }}
+        onRetry={() => {
+          if (interviewError?.kind === "load_failed") {
+            // Re-run the candidate-info fetch. The effect re-sets state on
+            // success (idle/active) or failure (error) — no blink through idle.
+            setLoadAttempt((n) => n + 1);
+          } else {
+            // WS/connection failure — restart the whole session flow.
+            setInterviewError(null);
+            setTranscript([]);
+            setSpeaker(null);
+            setInterviewState("idle");
+          }
+        }}
+      />
+    );
+  }
+
   // ── State F: Complete ───────────────────────────────────────────────────
   if (interviewState === "complete") {
     return (
       <div className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
-        <div className="text-4xl">✅</div>
+        <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-green-100/80 text-green-600">
+          <CheckCircle className="h-7 w-7" aria-hidden="true" />
+        </div>
         <h2 className="text-xl font-semibold">Interview Complete</h2>
         <p className="text-sm text-muted-foreground">
           Thank you. The interview has been recorded.
