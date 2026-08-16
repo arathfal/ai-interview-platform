@@ -8,26 +8,43 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Loader2 } from "lucide-react";
 
+const DEV_TENANT_SCHEME = import.meta.env.VITE_DEV_TENANT_SCHEME ?? "";
+
 export default function LoginPage() {
   const navigate = useNavigate();
   const setAuth = useSetAtom(authAtom);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // F-03: tenant is an explicit user decision at login — never implicit.
+  const [tenant, setTenant] = useState(DEV_TENANT_SCHEME);
+  const [tenantError, setTenantError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
+    // F-03 AC#5: never send the request without a tenant scheme.
+    if (!tenant.trim()) {
+      setTenantError("Tenant is required.");
+      return;
+    }
+    setTenantError(null);
+
     setLoading(true);
     try {
-      const res = await authApi.login({ email, password });
+      const res = await authApi.login({ email, password }, tenant.trim());
       const token = res.data.token;
       saveToken(token);
       setAuth({ token });
       navigate("/assessments");
-    } catch {
-      setError("Invalid email or password.");
+    } catch (err) {
+      // F-03 AC#8: surface the backend error (unknown scheme, required header)
+      // instead of a misleading generic credential message.
+      const backendMessage = (err as { response?: { data?: { errors?: Array<{ message?: string }> } } })
+        ?.response?.data?.errors?.[0]?.message;
+      setError(backendMessage ?? "Invalid email or password.");
     } finally {
       setLoading(false);
     }
@@ -42,6 +59,32 @@ export default function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="tenant">Tenant</Label>
+            <Input
+              id="tenant"
+              type="text"
+              autoComplete="organization"
+              placeholder="e.g. test-corp"
+              value={tenant}
+              onChange={(e) => {
+                setTenant(e.target.value);
+                if (tenantError) setTenantError(null);
+              }}
+              aria-invalid={tenantError ? true : undefined}
+            />
+            {/* F-03 AC#5: inline tenant error replaces the helper info (error ?? info). */}
+            {tenantError ? (
+              <p className="text-sm text-destructive" role="alert">
+                {tenantError}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Organization scheme — provided by your assessor.
+              </p>
+            )}
+          </div>
+
           <div className="space-y-1.5">
             <Label htmlFor="email">Email</Label>
             <Input
