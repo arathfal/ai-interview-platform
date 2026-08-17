@@ -17,6 +17,7 @@ import VacancyNewPage from "@/pages/vacancies/VacancyNewPage";
 import VacancyEditPage from "@/pages/vacancies/VacancyEditPage";
 import InterviewPage from "@/pages/interview/InterviewPage";
 import ErrorUIPlayground from "@/pages/dev/ErrorUIPlayground";
+import NavbarPlayground from "@/pages/dev/NavbarPlayground";
 import { ToastViewport } from "@/components/ui/toast";
 
 export default function App() {
@@ -64,7 +65,10 @@ export default function App() {
 
       {/* Dev-only playgrounds — never shipped in production builds */}
       {import.meta.env.DEV && (
-        <Route path="/dev/error-ui" element={<ErrorUIPlayground />} />
+        <>
+          <Route path="/dev/error-ui" element={<ErrorUIPlayground />} />
+          <Route path="/dev/navbar-playground" element={<NavbarPlayground />} />
+        </>
       )}
       </Routes>
       <ToastViewport />
