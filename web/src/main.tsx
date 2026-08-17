@@ -4,10 +4,11 @@ import { Provider as JotaiProvider } from "jotai";
 import "./index.css";
 import App from "./App";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { store } from "@/stores/toastStore";
 
 createRoot(document.getElementById("root")!).render(
     <ErrorBoundary>
-        <JotaiProvider>
+        <JotaiProvider store={store}>
             <BrowserRouter>
                 <App />
             </BrowserRouter>
