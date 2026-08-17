@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { authApi } from "@/services/auth";
 
 // Mock the axios instance — we only assert the outgoing request shape.
@@ -10,27 +10,47 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe("authApi.login (F-03 — tenant-explicit header)", () => {
-  it("sends X-Tenant-Scheme header with the given scheme", async () => {
-    const api = (await import("@/services/api")).default;
-    const postMock = api.post as ReturnType<typeof vi.fn>;
+async function postMock(): Promise<Mock<(...args: unknown[]) => unknown>> {
+  const api = (await import("@/services/api")).default;
+  return api.post as unknown as Mock<(...args: unknown[]) => unknown>;
+}
 
-    await authApi.login({ email: "a@b.c", password: "secret" }, "test-corp");
+describe("authApi.login (F-03 phase 2 — tenant-implicit)", () => {
+  it("posts email + password only, with no X-Tenant-Scheme header", async () => {
+    const mock = await postMock();
 
-    expect(postMock).toHaveBeenCalledWith(
-      "/auth/login",
-      { email: "a@b.c", password: "secret" },
-      { headers: { "X-Tenant-Scheme": "test-corp" } }
-    );
+    await authApi.login({ email: "a@b.c", password: "secret" });
+
+    expect(mock).toHaveBeenCalledWith("/auth/login", { email: "a@b.c", password: "secret" });
   });
 
-  it("passes through the exact scheme string (no trimming/mutation at service layer)", async () => {
-    const api = (await import("@/services/api")).default;
-    const postMock = api.post as ReturnType<typeof vi.fn>;
+  it("never sends tenant headers — the scheme is derived server-side from the account", async () => {
+    const mock = await postMock();
 
-    await authApi.login({ email: "a@b.c", password: "secret" }, "Alpha-Corp ");
+    await authApi.login({ email: "a@b.c", password: "secret" });
 
-    const { headers } = postMock.mock.calls[0][2];
-    expect(headers["X-Tenant-Scheme"]).toBe("Alpha-Corp ");
+    const args = mock.mock.calls[0];
+    expect(args[0]).toBe("/auth/login");
+    expect(args[2]).toBeUndefined(); // no config → no custom headers
+  });
+});
+
+describe("authApi.signup (F-03 phase 2 — organization dropdown)", () => {
+  it("posts to /auth/signup with the chosen organization_id", async () => {
+    const mock = await postMock();
+
+    await authApi.signup({
+      email: "a@b.c",
+      password: "secret",
+      role: "admin",
+      organization_id: 7,
+    });
+
+    expect(mock).toHaveBeenCalledWith("/auth/signup", {
+      email: "a@b.c",
+      password: "secret",
+      role: "admin",
+      organization_id: 7,
+    });
   });
 });

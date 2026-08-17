@@ -40,12 +40,13 @@ function renderLogin() {
   );
 }
 
-describe("LoginPage — tenant-explicit login (F-03)", () => {
-  it("renders a Tenant field with a placeholder", () => {
+describe("LoginPage — tenant-implicit login (F-03 phase 2)", () => {
+  it("renders email + password only — no tenant field", () => {
     renderLogin();
-    const tenantInput = screen.getByLabelText(/tenant/i);
-    expect(tenantInput).toBeInTheDocument();
-    expect(tenantInput).toHaveAttribute("placeholder", "e.g. test-corp");
+
+    expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^password$/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/tenant/i)).not.toBeInTheDocument();
   });
 
   it("toggles password visibility with the eye icon (UXI polish)", async () => {
@@ -62,61 +63,34 @@ describe("LoginPage — tenant-explicit login (F-03)", () => {
     expect(passwordInput).toHaveAttribute("type", "password");
   });
 
-  it("blocks submit when tenant is empty — no request, inline error under the Tenant field (AC#5)", async () => {
-    const user = userEvent.setup();
-    renderLogin();
-
-    await user.type(screen.getByLabelText(/email/i), "a@b.c");
-    await user.type(screen.getByLabelText(/^password$/i), "secret");
-    await user.click(screen.getByRole("button", { name: /sign in/i }));
-
-    expect(loginMock).not.toHaveBeenCalled();
-    // error replaces the helper info (error ?? info)
-    expect(await screen.findByText("Tenant is required.")).toBeInTheDocument();
-    expect(
-      screen.queryByText(/organization scheme — provided by your assessor/i)
-    ).not.toBeInTheDocument();
-    // typing again clears the inline tenant error and restores helper info
-    await user.type(screen.getByLabelText(/tenant/i), "t");
-    expect(screen.queryByText("Tenant is required.")).not.toBeInTheDocument();
-    expect(
-      screen.getByText(/organization scheme — provided by your assessor/i)
-    ).toBeInTheDocument();
-  });
-
-  it("sends the tenant scheme with login and navigates on success", async () => {
+  it("sends email + password only and navigates on success (clean login, no scheme)", async () => {
     const user = userEvent.setup();
     loginMock.mockResolvedValue({ data: { token: "tok123" } });
     renderLogin();
 
-    await user.type(screen.getByLabelText(/tenant/i), "test-corp");
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
     await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     await waitFor(() => {
-      expect(loginMock).toHaveBeenCalledWith(
-        { email: "assessor@test.corp", password: "Password123!" },
-        "test-corp"
-      );
+      expect(loginMock).toHaveBeenCalledWith({ email: "assessor@test.corp", password: "Password123!" });
     });
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/assessments"));
     expect(localStorage.getItem("auth_token")).toBe("tok123");
   });
 
-  it("surfaces the backend error message instead of a generic one (AC#8)", async () => {
+  it("surfaces the backend error (e.g. account not assigned) instead of a generic one", async () => {
     const user = userEvent.setup();
     loginMock.mockRejectedValue({
-      response: { data: { errors: [{ message: "Unknown tenant scheme" }] } },
+      response: { data: { errors: [{ message: "Account is not assigned to an organization" }] } },
     });
     renderLogin();
 
-    await user.type(screen.getByLabelText(/tenant/i), "nope");
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
     await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByText("Unknown tenant scheme")).toBeInTheDocument();
+    expect(await screen.findByText("Account is not assigned to an organization")).toBeInTheDocument();
     expect(screen.queryByText(/invalid email or password/i)).not.toBeInTheDocument();
   });
 
@@ -125,29 +99,17 @@ describe("LoginPage — tenant-explicit login (F-03)", () => {
     loginMock.mockRejectedValue(new Error("network down"));
     renderLogin();
 
-    await user.type(screen.getByLabelText(/tenant/i), "test-corp");
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
     await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
     expect(await screen.findByText("Invalid email or password.")).toBeInTheDocument();
   });
-});
 
-describe("LoginPage — dev default tenant scheme (AC#6)", () => {
-  it("pre-fills the Tenant field from VITE_DEV_TENANT_SCHEME when set", async () => {
-    vi.stubEnv("VITE_DEV_TENANT_SCHEME", "dev-corp");
-    vi.resetModules();
-    const { default: LoginPageFresh } = await import("@/pages/auth/LoginPage");
+  it("shows the signup CTA below the button linking to /signup (AC#7)", () => {
+    renderLogin();
 
-    render(
-      <MemoryRouter initialEntries={["/login"]}>
-        <Routes>
-          <Route path="/login" element={<LoginPageFresh />} />
-        </Routes>
-      </MemoryRouter>
-    );
-
-    expect(screen.getByLabelText(/tenant/i)).toHaveValue("dev-corp");
+    const cta = screen.getByRole("link", { name: /sign up/i });
+    expect(cta).toHaveAttribute("href", "/signup");
   });
 });
