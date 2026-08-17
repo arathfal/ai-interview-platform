@@ -32,6 +32,12 @@ module Api
       # F-03 phase 2: activates signup with an organization picked from the
       # public GET /api/v1/organizations listing. The user is created already
       # assigned to the chosen org, so the first login is tenant-implicit.
+      #
+      # Signup always creates an 'admin' account: this platform has a single
+      # authenticated user type (assessor-capable). The 'user' role has no
+      # flow (login requires 'admin', every protected page requires assessor
+      # permissions, candidates use invite tokens without accounts) — an
+      # account created with role 'user' can log in nowhere and is a trap.
       def signup
         if params[:organization_id].blank?
           return json_error('Organization is required', :unprocessable_entity)
@@ -43,7 +49,7 @@ module Api
         user = User.new(
           email: params[:email].to_s.downcase,
           password: params[:password],
-          role: params[:role],
+          role: 'admin',
           organization:
         )
 

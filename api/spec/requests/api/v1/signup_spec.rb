@@ -67,11 +67,16 @@ RSpec.describe 'Auth signup (F-03 phase 2)', type: :request do
     expect(User.where(email: 'new@test.corp').count).to eq(1)
   end
 
-  it 'rejects an invalid role with 422' do
-    signup(params: { role: 'superadmin' })
+  it 'ignores a role param — signup always creates an admin account' do
+    signup(params: { role: 'user' })
 
-    expect(response).to have_http_status(:unprocessable_entity)
-    expect(JSON.parse(response.body)['errors'][0]['message']).to match(/Role/)
+    expect(response).to have_http_status(:created)
+    expect(User.find_by!(email: 'new@test.corp').role).to eq('admin')
+    # regression: an account created via signup must be login-capable
+    post '/api/v1/auth/login',
+         params: { email: 'new@test.corp', password: 'Password123!' }.to_json,
+         headers: { 'Content-Type' => 'application/json' }
+    expect(response).to have_http_status(:ok)
   end
 
   it 'works without any auth header (public, pre-auth endpoint)' do
