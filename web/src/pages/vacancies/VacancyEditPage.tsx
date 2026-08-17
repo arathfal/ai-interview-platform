@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -7,10 +7,12 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert } from "@/components/ui/alert";
+import { extractApiError } from "@/lib/apiErrors";
 import LevelRadio from "@/components/assessment/LevelRadio";
 import SkillPicker from "@/components/assessment/SkillPicker";
 import { vacanciesApi } from "@/services/vacancies";
-import { ArrowLeft, Plus, X, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, X, Loader2, RefreshCw } from "lucide-react";
 import type { VacancySkill } from "@/types";
 
 interface VacancyFormValues {
@@ -26,21 +28,35 @@ export default function VacancyEditPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const { register, handleSubmit, control, setValue, watch, reset } = useForm<VacancyFormValues>({
     defaultValues: { role_title: "", culture_dimensions: "", competency_expectations: "", skills: [] },
   });
   const { fields, append, remove } = useFieldArray({ control, name: "skills" });
 
-  useEffect(() => {
-    vacanciesApi.get(Number(id)).then((res) => {
+  const loadVacancy = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const res = await vacanciesApi.get(Number(id));
       const v = res.data.vacancy;
       reset({ role_title: v.role_title, culture_dimensions: v.culture_dimensions, competency_expectations: v.competency_expectations, skills: v.skills });
-    }).catch(() => {}).finally(() => setLoading(false));
+    } catch (e) {
+      // F-26: no silent catch — show a banner with retry instead.
+      setLoadError(extractApiError(e).message);
+    } finally {
+      setLoading(false);
+    }
   }, [id, reset]);
+
+  useEffect(() => {
+    loadVacancy();
+  }, [loadVacancy]);
 
   const onSubmit = async (data: VacancyFormValues) => {
     setSubmitting(true);
+    setError(null);
     try {
       await vacanciesApi.update(Number(id), {
         role_title: data.role_title,
@@ -49,6 +65,9 @@ export default function VacancyEditPage() {
         vacancy_skills_attributes: data.skills,
       });
       navigate("/vacancies");
+    } catch (e) {
+      // F-26: previously an unhandled rejection — now surfaced to the assessor.
+      setError(extractApiError(e).message);
     } finally {
       setSubmitting(false);
     }
@@ -64,11 +83,34 @@ export default function VacancyEditPage() {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        {loadError && (
+          <Alert>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm">Couldn't load this vacancy: {loadError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => {
+                  setLoading(true);
+                  loadVacancy();
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+              </Button>
+            </div>
+          </Alert>
+        )}
         <div className="space-y-1.5">
           <Label>Role title <span className="text-destructive">*</span></Label>
           <Input {...register("role_title", { required: true })} />
         </div>
         <Separator />
+        {error && (
+          <Alert>
+            <p className="text-sm">{error}</p>
+          </Alert>
+        )}
         <div className="space-y-3">
           <Label>Expected skills</Label>
           {fields.map((field, index) => (
