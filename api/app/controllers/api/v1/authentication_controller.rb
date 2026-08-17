@@ -6,6 +6,12 @@ module Api
       skip_before_action :require_tenant!
 
       # POST /api/v1/auth/login
+      #
+      # F-03 phase 2 (decision evolution A → D): tenancy is derived from the
+      # account's organization relation — the login is clean (email + password),
+      # and any X-Tenant-Scheme header is ignored (a user can never claim a
+      # tenant that is not their own via input). A user without an assigned
+      # organization is rejected explicitly instead of being silently routed.
       def authenticate
         user = User.find_by(email: params[:email].to_s.downcase)
 
@@ -13,35 +19,40 @@ module Api
 
         return json_error('Invalid email or password', :unauthorized) unless user.role == 'admin'
 
-        scheme = resolve_scheme
-        return if scheme.blank? # json_error sudah di-render oleh resolve_scheme
+        organization = user.organization
+        return json_error('Account is not assigned to an organization', :unauthorized) if organization.nil?
 
-        token = JsonWebToken.encode({ user_id: user.id, role: user.role, scheme: })
+        token = JsonWebToken.encode({ user_id: user.id, role: user.role, scheme: organization.scheme })
 
         json_response({ token:, user: { id: user.id, email: user.email, role: user.role } })
       end
 
-      private
-
-      # F-03: tenant must be explicit at login. The X-Tenant-Scheme header is
-      # REQUIRED — no silent fallback to `SELECT ... LIMIT 1` (non-deterministic).
-      # The scheme must match an existing organization, otherwise we refuse.
-      # Returns nil after rendering a 401 error; caller must stop.
-      def resolve_scheme
-        scheme = request.headers['X-Tenant-Scheme'].to_s.strip.downcase
-
-        if scheme.blank?
-          json_error('Tenant scheme is required', :unauthorized)
-          return nil
+      # POST /api/v1/auth/signup
+      #
+      # F-03 phase 2: activates signup with an organization picked from the
+      # public GET /api/v1/organizations listing. The user is created already
+      # assigned to the chosen org, so the first login is tenant-implicit.
+      def signup
+        if params[:organization_id].blank?
+          return json_error('Organization is required', :unprocessable_entity)
         end
 
-        organization = Organization.where('lower(scheme) = ?', scheme).first
-        if organization.nil?
-          json_error('Unknown tenant scheme', :unauthorized)
-          return nil
-        end
+        organization = Organization.find_by(id: params[:organization_id])
+        return json_error('Organization not found', :unprocessable_entity) if organization.nil?
 
-        organization.scheme
+        user = User.new(
+          email: params[:email].to_s.downcase,
+          password: params[:password],
+          role: params[:role],
+          organization:
+        )
+
+        if user.save
+          token = JsonWebToken.encode({ user_id: user.id, role: user.role, scheme: organization.scheme })
+          json_response({ token:, user: { id: user.id, email: user.email, role: user.role } }, :created)
+        else
+          json_error(user.errors.full_messages.first, :unprocessable_entity)
+        end
       end
     end
   end
