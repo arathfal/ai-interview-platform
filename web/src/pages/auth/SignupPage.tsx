@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSetAtom } from "jotai";
+import { useForm, Controller } from "react-hook-form";
 import { authAtom, saveToken } from "@/stores/authAtom";
 import { authApi } from "@/services/auth";
 import { organizationsApi, OrganizationSummary } from "@/services/organizations";
@@ -8,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
+import { Alert } from "@/components/ui/alert";
+import { extractApiError } from "@/lib/apiErrors";
 import {
   Select,
   SelectContent,
@@ -16,18 +19,35 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+// Mirrors the backend User validation (URI::MailTo::EMAIL_REGEXP).
+const EMAIL_PATTERN = /^\S+@\S+\.\S+$/;
+
+interface SignupFormValues {
+  organizationId: string;
+  email: string;
+  password: string;
+}
 
 export default function SignupPage() {
   const navigate = useNavigate();
   const setAuth = useSetAtom(authAtom);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const [organizations, setOrganizations] = useState<OrganizationSummary[]>([]);
-  const [organizationId, setOrganizationId] = useState<string>("");
   const [orgsLoading, setOrgsLoading] = useState(true);
-  const [orgError, setOrgError] = useState<string | null>(null);
+  const [orgLoadError, setOrgLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const {
+    register,
+    handleSubmit,
+    control,
+    formState: { errors },
+  } = useForm<SignupFormValues>({
+    defaultValues: { organizationId: "", email: "", password: "" },
+    mode: "onTouched",
+  });
 
   // F-03 phase 2 AC#6: the organization dropdown is fed by the public
   // GET /organizations listing — a real source of truth, no typing of schemes.
@@ -41,7 +61,7 @@ export default function SignupPage() {
       })
       .catch(() => {
         if (!active) return;
-        setOrgError("Failed to load organizations. Please try again.");
+        setOrgLoadError("Failed to load organizations. Please try again.");
       })
       .finally(() => {
         if (active) setOrgsLoading(false);
@@ -51,37 +71,30 @@ export default function SignupPage() {
     };
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const onSubmit = async (data: SignupFormValues) => {
     setError(null);
-
-    if (!organizationId) {
-      setOrgError("Please select an organization.");
-      return;
-    }
-    setOrgError(null);
-
     setLoading(true);
     try {
       const res = await authApi.signup({
-        email,
-        password,
-        organization_id: Number(organizationId),
+        email: data.email,
+        password: data.password,
+        organization_id: Number(data.organizationId),
       });
       const token = res.data.token;
       saveToken(token);
       setAuth({ token });
       navigate("/assessments");
     } catch (err) {
-      const backendMessage = (err as { response?: { data?: { errors?: Array<{ message?: string }> } } })
-        ?.response?.data?.errors?.[0]?.message;
-      setError(backendMessage ?? "Signup failed. Please try again.");
+      // F-26: unified error extraction — backend envelope, legacy envelope,
+      // or network failure, all normalized to a user-presentable message.
+      setError(extractApiError(err).message);
     } finally {
       setLoading(false);
     }
   };
 
   const orgsEmpty = !orgsLoading && organizations.length === 0;
+  const canSubmit = !orgsLoading && !orgsEmpty;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background">
@@ -91,37 +104,51 @@ export default function SignupPage() {
           <p className="text-sm text-muted-foreground mt-1">Create an account</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
           <div className="space-y-1.5">
             <Label htmlFor="organization">Organization</Label>
-            <Select
-              value={organizationId}
-              onValueChange={(v) => {
-                setOrganizationId(v);
-                if (orgError) setOrgError(null);
-              }}
-              disabled={orgsLoading || orgsEmpty}
-            >
-              <SelectTrigger id="organization" aria-invalid={orgError ? true : undefined}>
-                <SelectValue placeholder={orgsLoading ? "Loading organizations…" : "Select an organization"} />
-              </SelectTrigger>
-              <SelectContent>
-                {organizations.map((org) => (
-                  <SelectItem key={org.id} value={String(org.id)}>
-                    {org.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {orgError ? (
-              <p className="text-sm text-destructive" role="alert">
-                {orgError}
-              </p>
-            ) : orgsEmpty ? (
-              <p className="text-sm text-destructive" role="alert">
-                No organizations available. Please contact your assessor.
-              </p>
-            ) : null}
+            <Controller
+              name="organizationId"
+              control={control}
+              rules={{ required: "Please select an organization." }}
+              render={({ field, fieldState }) => (
+                <>
+                  <Select
+                    value={field.value}
+                    onValueChange={field.onChange}
+                    disabled={orgsLoading || orgsEmpty}
+                  >
+                    <SelectTrigger
+                      id="organization"
+                      aria-invalid={fieldState.error ? true : undefined}
+                      className={cn(fieldState.error && "border-destructive focus-visible:ring-destructive/40")}
+                    >
+                      <SelectValue placeholder={orgsLoading ? "Loading organizations…" : "Select an organization"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {organizations.map((org) => (
+                        <SelectItem key={org.id} value={String(org.id)}>
+                          {org.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {fieldState.error ? (
+                    <p className="text-xs text-destructive" role="alert">
+                      {fieldState.error.message}
+                    </p>
+                  ) : orgLoadError ? (
+                    <p className="text-xs text-destructive" role="alert">
+                      {orgLoadError}
+                    </p>
+                  ) : orgsEmpty ? (
+                    <p className="text-xs text-destructive" role="alert">
+                      No organizations available. Please contact your assessor.
+                    </p>
+                  ) : null}
+                </>
+              )}
+            />
           </div>
 
           <div className="space-y-1.5">
@@ -130,10 +157,19 @@ export default function SignupPage() {
               id="email"
               type="email"
               autoComplete="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
+              placeholder="you@company.com"
+              aria-invalid={errors.email ? true : undefined}
+              className={cn(errors.email && "border-destructive focus-visible:ring-destructive/40")}
+              {...register("email", {
+                required: "Email is required.",
+                pattern: { value: EMAIL_PATTERN, message: "Enter a valid email address." },
+              })}
             />
+            {errors.email && (
+              <p className="text-xs text-destructive" role="alert">
+                {errors.email.message}
+              </p>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -141,15 +177,24 @@ export default function SignupPage() {
             <PasswordInput
               id="password"
               autoComplete="new-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
+              aria-invalid={errors.password ? true : undefined}
+              className={cn(errors.password && "border-destructive focus-visible:ring-destructive/40")}
+              {...register("password", { required: "Password is required." })}
             />
+            {errors.password && (
+              <p className="text-xs text-destructive" role="alert">
+                {errors.password.message}
+              </p>
+            )}
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {error && (
+            <Alert>
+              <p className="text-sm">{error}</p>
+            </Alert>
+          )}
 
-          <Button type="submit" className="w-full" disabled={loading || orgsLoading || orgsEmpty}>
+          <Button type="submit" className="w-full" disabled={loading || !canSubmit}>
             {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Sign up
           </Button>

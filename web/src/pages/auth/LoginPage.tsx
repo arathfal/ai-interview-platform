@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSetAtom } from "jotai";
 import { authAtom, saveToken } from "@/stores/authAtom";
@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PasswordInput } from "@/components/ui/password-input";
+import { Alert } from "@/components/ui/alert";
+import { extractApiError } from "@/lib/apiErrors";
 import { Loader2 } from "lucide-react";
 
 export default function LoginPage() {
@@ -16,10 +18,22 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Surface a "session expired" notice after the axios interceptor redirected
+  // us here with the auth_expired flag set (F-26 AC#5).
+  useEffect(() => {
+    const expired = sessionStorage.getItem("auth_expired");
+    if (expired) {
+      sessionStorage.removeItem("auth_expired");
+      setNotice("Your session has expired. Please sign in again.");
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+    setNotice(null);
 
     setLoading(true);
     try {
@@ -31,11 +45,10 @@ export default function LoginPage() {
       setAuth({ token });
       navigate("/assessments");
     } catch (err) {
-      // F-03 AC#9: surface the backend error (e.g. account not assigned to an
-      // organization) instead of a misleading generic credential message.
-      const backendMessage = (err as { response?: { data?: { errors?: Array<{ message?: string }> } } })
-        ?.response?.data?.errors?.[0]?.message;
-      setError(backendMessage ?? "Invalid email or password.");
+      // F-03 AC#9 / F-26: surface the real backend error (e.g. account not
+      // assigned to an organization, rate limit, network failure) instead of
+      // a misleading generic credential message.
+      setError(extractApiError(err).message);
     } finally {
       setLoading(false);
     }
@@ -73,7 +86,16 @@ export default function LoginPage() {
             />
           </div>
 
-          {error && <p className="text-sm text-destructive">{error}</p>}
+          {notice && (
+            <Alert variant="info">
+              <p className="text-sm">{notice}</p>
+            </Alert>
+          )}
+          {error && (
+            <Alert>
+              <p className="text-sm">{error}</p>
+            </Alert>
+          )}
 
           <Button type="submit" className="w-full" disabled={loading}>
             {loading && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
