@@ -40,8 +40,8 @@ RSpec.describe 'Sessions audio_complete authorization', type: :request do
       post_audio_complete
 
       expect(response).to have_http_status(:conflict)
-      expect(json_body.dig('errors', 0, 'status')).to eq(409)
-      expect(json_body.dig('errors', 0, 'message')).to eq('Session is not ready to end')
+      expect(json_body.dig('error', 'code')).to eq('conflict')
+      expect(json_body.dig('error', 'message')).to eq('Session is not ready to end')
 
       expect(session.reload.status).to eq('active')
       expect(Portfolio.unscoped.find_by(session_id: session.id)).to be_nil
@@ -86,7 +86,7 @@ RSpec.describe 'Sessions audio_complete authorization', type: :request do
       post_audio_complete
 
       expect(response).to have_http_status(:conflict)
-      expect(json_body.dig('errors', 0, 'message')).to eq('Session is not ready to end')
+      expect(json_body.dig('error', 'message')).to eq('Session is not ready to end')
       expect(session.reload.status).to eq('active')
     end
   end
@@ -111,7 +111,8 @@ RSpec.describe 'Sessions audio_complete authorization', type: :request do
       post_audio_complete('a' * 64)
 
       expect(response).to have_http_status(:not_found)
-      expect(json_body.dig('errors', 0, 'message')).to eq('Invalid or expired invite token')
+      expect(json_body.dig('error', 'code')).to eq('not_found')
+      expect(json_body.dig('error', 'message')).to eq('Invalid or expired invite token')
     end
   end
 end

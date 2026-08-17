@@ -54,7 +54,7 @@ RSpec.describe 'Authentication API (F-03 phase 2)', type: :request do
 
       expect(response).to have_http_status(:unauthorized)
       body = JSON.parse(response.body)
-      expect(body['errors'][0]['message']).to eq('Account is not assigned to an organization')
+      expect(body.dig('error', 'message')).to eq('Account is not assigned to an organization')
       expect(body['token']).to be_nil
     end
   end
@@ -121,14 +121,14 @@ RSpec.describe 'Authentication API (F-03 phase 2)', type: :request do
       login(email: admin_b.email, password: 'WrongPassword1')
 
       expect(response).to have_http_status(:unauthorized)
-      expect(JSON.parse(response.body)['errors'][0]['message']).to eq('Invalid email or password')
+      expect(JSON.parse(response.body).dig('error', 'message')).to eq('Invalid email or password')
     end
 
     it 'still returns Invalid email or password for an unknown email' do
       login(email: 'ghost@test.corp')
 
       expect(response).to have_http_status(:unauthorized)
-      expect(JSON.parse(response.body)['errors'][0]['message']).to eq('Invalid email or password')
+      expect(JSON.parse(response.body).dig('error', 'message')).to eq('Invalid email or password')
     end
   end
 end

@@ -82,7 +82,7 @@ describe("LoginPage — tenant-implicit login (F-03 phase 2)", () => {
   it("surfaces the backend error (e.g. account not assigned) instead of a generic one", async () => {
     const user = userEvent.setup();
     loginMock.mockRejectedValue({
-      response: { data: { errors: [{ message: "Account is not assigned to an organization" }] } },
+      response: { status: 401, data: { error: { code: "unauthorized", message: "Account is not assigned to an organization" } } },
     });
     renderLogin();
 
@@ -94,16 +94,31 @@ describe("LoginPage — tenant-implicit login (F-03 phase 2)", () => {
     expect(screen.queryByText(/invalid email or password/i)).not.toBeInTheDocument();
   });
 
-  it("falls back to a generic message when the error has no backend envelope", async () => {
+  it("surfaces network errors with the connection message instead of a generic one (F-26)", async () => {
     const user = userEvent.setup();
-    loginMock.mockRejectedValue(new Error("network down"));
+    loginMock.mockRejectedValue(new Error("Network Error"));
     renderLogin();
 
     await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
     await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign in/i }));
 
-    expect(await screen.findByText("Invalid email or password.")).toBeInTheDocument();
+    expect(await screen.findByText("Network Error")).toBeInTheDocument();
+    expect(screen.queryByText(/invalid email or password/i)).not.toBeInTheDocument();
+  });
+
+  it("still parses the legacy errors array envelope (backward compat, F-26)", async () => {
+    const user = userEvent.setup();
+    loginMock.mockRejectedValue({
+      response: { data: { errors: [{ status: 401, message: "Account is not assigned to an organization" }] } },
+    });
+    renderLogin();
+
+    await user.type(screen.getByLabelText(/email/i), "assessor@test.corp");
+    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(await screen.findByText("Account is not assigned to an organization")).toBeInTheDocument();
   });
 
   it("shows the signup CTA below the button linking to /signup (AC#7)", () => {

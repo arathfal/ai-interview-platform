@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useForm, useFieldArray } from "react-hook-form";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import {
@@ -21,9 +21,11 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Alert } from "@/components/ui/alert";
+import { extractApiError } from "@/lib/apiErrors";
 import SkillCard from "@/components/assessment/SkillCard";
 import SkillPicker from "@/components/assessment/SkillPicker";
-import { ArrowLeft, Plus, Loader2 } from "lucide-react";
+import { ArrowLeft, Plus, Loader2, RefreshCw } from "lucide-react";
 import { assessmentsApi } from "@/services/assessments";
 import { TIME_LIMIT_OPTIONS } from "@/utils/constants";
 import type { AssessmentSkill } from "@/types";
@@ -36,6 +38,7 @@ export default function AssessmentEditPage() {
   const [submitting, setSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const form = useForm<AssessmentFormValues>({
     defaultValues: { name: "", time_limit_min: 45, skills: [] },
@@ -44,16 +47,23 @@ export default function AssessmentEditPage() {
   const { register, handleSubmit, control, setValue, reset, formState: { errors } } = form;
   const { fields, append, remove, move } = useFieldArray({ control, name: "skills" });
 
-  useEffect(() => {
-    assessmentsApi
-      .get(Number(id))
-      .then((res) => {
-        const a = res.data.assessment;
-        reset({ name: a.name, time_limit_min: a.time_limit_min, skills: a.skills });
-      })
-      .catch(() => {})
-      .finally(() => setLoading(false));
+  const loadAssessment = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const res = await assessmentsApi.get(Number(id));
+      const a = res.data.assessment;
+      reset({ name: a.name, time_limit_min: a.time_limit_min, skills: a.skills });
+    } catch (e) {
+      // F-26: no silent catch — a failed load shows a banner with retry.
+      setLoadError(extractApiError(e).message);
+    } finally {
+      setLoading(false);
+    }
   }, [id, reset]);
+
+  useEffect(() => {
+    loadAssessment();
+  }, [loadAssessment]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -81,7 +91,7 @@ export default function AssessmentEditPage() {
       });
       navigate(`/assessments/${id}/invite`);
     } catch (e: any) {
-      setError(e?.response?.data?.errors?.[0]?.message ?? "Failed to save.");
+      setError(extractApiError(e).message);
     } finally {
       setSubmitting(false);
     }
@@ -110,6 +120,24 @@ export default function AssessmentEditPage() {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+        {loadError && (
+          <Alert>
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm">Couldn't load this assessment: {loadError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="shrink-0"
+                onClick={() => {
+                  setLoading(true);
+                  loadAssessment();
+                }}
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+              </Button>
+            </div>
+          </Alert>
+        )}
         <div className="space-y-1.5">
           <Label htmlFor="name">Role title <span className="text-destructive">*</span></Label>
           <Input id="name" {...register("name", { required: true })} />
@@ -160,7 +188,11 @@ export default function AssessmentEditPage() {
         </div>
 
         <Separator />
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && (
+          <Alert>
+            <p className="text-sm">{error}</p>
+          </Alert>
+        )}
 
         <div className="flex justify-end gap-2">
           <Button type="button" variant="outline" onClick={() => navigate(`/assessments/${id}/invite`)}>Cancel</Button>

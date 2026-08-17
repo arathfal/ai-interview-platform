@@ -16,12 +16,12 @@ class Rack::Attack
     req.ip if req.path.match?(%r{\A/api/v1/sessions/[^/]+/(candidate|audio_complete)\z})
   end
 
-  # Return 429 JSON instead of the default plain-text response.
+  # Return 429 JSON in the unified error envelope instead of the default plain-text response.
   self.throttled_responder = lambda do |_req|
     [
       429,
       { 'Content-Type' => 'application/json' },
-      [{ error: 'Too many requests. Please try again later.' }.to_json]
+      [ErrorEnvelope.payload(message: 'Too many requests. Please try again later.', status: 429).to_json]
     ]
   end
 end

@@ -159,4 +159,31 @@ describe("SignUpPage — organization dropdown signup (F-03 phase 2)", () => {
       await screen.findByText("Failed to load organizations. Please try again.")
     ).toBeInTheDocument();
   });
+
+  it("rejects an invalid email with an inline error (F-26)", async () => {
+    listMock.mockResolvedValue({ data: { organizations: ORGS } });
+    renderSignup();
+
+    const user = userEvent.setup();
+    await selectOrg(user, "Tenant A");
+    await user.type(screen.getByLabelText(/email/i), "not-an-email");
+    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(await screen.findByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(signupMock).not.toHaveBeenCalled();
+  });
+
+  it("requires both email and password with inline messages (F-26)", async () => {
+    listMock.mockResolvedValue({ data: { organizations: ORGS } });
+    renderSignup();
+
+    const user = userEvent.setup();
+    await selectOrg(user, "Tenant A");
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(await screen.findByText("Email is required.")).toBeInTheDocument();
+    expect(screen.getByText("Password is required.")).toBeInTheDocument();
+    expect(signupMock).not.toHaveBeenCalled();
+  });
 });
