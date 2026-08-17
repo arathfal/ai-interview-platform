@@ -5,18 +5,24 @@ export interface LoginPayload {
   password: string;
 }
 
+export interface SignupPayload {
+  email: string;
+  password: string;
+  role: "admin" | "user";
+  organization_id: number;
+}
+
 export interface LoginResponse {
   token: string;
 }
 
 export const authApi = {
-  // F-03: login is tenant-explicit — the scheme is sent as X-Tenant-Scheme
-  // so the backend never falls back to a random organization.
-  login: (data: LoginPayload, tenantScheme: string) =>
-    api.post<LoginResponse>("/auth/login", data, {
-      headers: { "X-Tenant-Scheme": tenantScheme },
-    }),
+  // F-03 phase 2 (decision evolution A → D): login is tenant-implicit —
+  // email + password only. The tenant scheme is derived server-side from the
+  // account's organization, so no X-Tenant-Scheme header is sent.
+  login: (data: LoginPayload) => api.post<LoginResponse>("/auth/login", data),
 
-  signup: (data: { email: string; password: string; role: "admin" | "user" }) =>
-    api.post<LoginResponse>("/signup", data),
+  // Signup requires the chosen organization (from the public org listing),
+  // so the new account is already assigned to a tenant from day one.
+  signup: (data: SignupPayload) => api.post<LoginResponse>("/auth/signup", data),
 };
