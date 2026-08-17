@@ -46,7 +46,7 @@ Fast & cheap, but data loss still happens (only no longer silent). The candidate
 
 ### Trade-offs accepted (Option A / for the chosen option)
 
-| Trade-off | Justifikasi / Justification |
+| Trade-off | Justification |
 |-----------|------------------------------|
 | Larger change (state machine + component + hook + tests) | The only option that saves candidate data (retry) — greatest impact on the non-user |
 | All failure paths mapped per kind | Cost of honest, specific messages; the union type locks the mapping |
@@ -74,9 +74,9 @@ Fast & cheap, but data loss still happens (only no longer silent). The candidate
 | 5 | Successful session | normal flow | Still `complete` (original success copy) — no regression | `session_ended` → still `complete`, no reconnect |
 | 6 | Type safety | — | `InterviewState` covers `error`; `InterviewErrorInfo` is structured | compile fails if a state is unhandled (`tsc --noEmit`) |
 
-## 6. Test & Verifikasi / Test & Verification
+## 6. Tests & Verification
 
-**Vitest — 3 test files, 13 tests, all passing (13/13 passing) (`npm test` di `web/`):**
+**Vitest — 3 test files, 13 tests, all passing (13/13 passing) (`npm test` in `web/`):**
 
 | Area | File | Coverage |
 |------|------|---------|
@@ -94,7 +94,7 @@ Fast & cheap, but data loss still happens (only no longer silent). The candidate
 - **Invalid token** → immediately renders the error screen **"This interview link isn't valid"** — **no "Try again" button** appears (only "Reload page").
 - **Other variants** (typo token, random token) → all consistently land on `auth_failed` with no retry button.
 
-Mapping verified: 401/404 dari `GET /api/v1/sessions/<invalid-token>/candidate` (token invalid) → `auth_failed` without retry; network/5xx → `load_failed` with retry; success flow (session ended) → still shows the complete screen.
+Mapping verified: 401/404 from `GET /api/v1/sessions/<invalid-token>/candidate` (token invalid) → `auth_failed` without retry; network/5xx → `load_failed` with retry; success flow (session ended) → still shows the complete screen.
 
 ## 7. AI-Human Verification
 
