@@ -186,4 +186,44 @@ describe("SignUpPage — organization dropdown signup (F-03 phase 2)", () => {
     expect(screen.getByText("Password is required.")).toBeInTheDocument();
     expect(signupMock).not.toHaveBeenCalled();
   });
+
+  it("blocks submit and shows the policy error for a password shorter than 8 chars (backend mirror)", async () => {
+    listMock.mockResolvedValue({ data: { organizations: ORGS } });
+    renderSignup();
+
+    const user = userEvent.setup();
+    await selectOrg(user, "Tenant A");
+    await user.type(screen.getByLabelText(/email/i), "new@test.corp");
+    await user.type(screen.getByLabelText(/^password$/i), "short");
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
+    expect(signupMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks submit and shows the policy error for a password longer than 72 chars (backend mirror)", async () => {
+    listMock.mockResolvedValue({ data: { organizations: ORGS } });
+    renderSignup();
+
+    const user = userEvent.setup();
+    await selectOrg(user, "Tenant A");
+    await user.type(screen.getByLabelText(/email/i), "new@test.corp");
+    await user.type(screen.getByLabelText(/^password$/i), "a".repeat(73));
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
+    expect(signupMock).not.toHaveBeenCalled();
+  });
+
+  it("validates the policy live on blur before submit (onTouched)", async () => {
+    listMock.mockResolvedValue({ data: { organizations: ORGS } });
+    renderSignup();
+
+    const user = userEvent.setup();
+    await selectOrg(user, "Tenant A");
+    await user.type(screen.getByLabelText(/^password$/i), "abc");
+    await user.tab(); // blur → onTouched validation fires
+
+    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
+  });
 });

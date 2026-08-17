@@ -179,7 +179,13 @@ export default function SignupPage() {
               autoComplete="new-password"
               aria-invalid={errors.password ? true : undefined}
               className={cn(errors.password && "border-destructive focus-visible:ring-destructive/40")}
-              {...register("password", { required: "Password is required." })}
+              {...register("password", {
+                required: "Password is required.",
+                // Mirror of the backend User validation (8–72 chars, NIST
+                // 800-63B). Same message as the model error on the API side.
+                minLength: { value: 8, message: "Password must be between 8 and 72 characters." },
+                maxLength: { value: 72, message: "Password must be between 8 and 72 characters." },
+              })}
             />
             {errors.password && (
               <p className="text-xs text-destructive" role="alert">
