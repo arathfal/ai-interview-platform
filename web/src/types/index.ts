@@ -173,6 +173,25 @@ export interface PaginationMeta {
   per_page: number;
 }
 
+// ── Unified error envelope (F-26) ──────────────────────────────────────
+// Backend contract: every HTTP error is { error: { code, message, details? } }.
+// The legacy envelopes ({ errors: [...] } and { error: "string" }) are still
+// parsed by the interceptor for backward compatibility — see lib/apiErrors.
+export interface ApiErrorEnvelope {
+  code: string;
+  message: string;
+  details?: unknown;
+}
+
+export interface NormalizedApiError {
+  /** HTTP status when the server responded; undefined for network failures. */
+  status?: number;
+  /** Machine-readable code (e.g. "not_found", "rate_limited", "network_error"). */
+  code: string;
+  /** Human-readable message safe to show to the user. */
+  message: string;
+}
+
 // WebSocket message types
 export type InterviewState =
   | "idle"
