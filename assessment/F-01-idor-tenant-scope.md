@@ -1,131 +1,131 @@
-# F-01 — IDOR: Portfolio, PortfolioSkill, FitGapReport Dapat Diakses Lintas Tenant
+# F-01 — IDOR: Portfolio, PortfolioSkill, FitGapReport Accessible Across Tenants
 
-> **Finding:** F-01 (P0\* — P2 jika single-tenant) · **Klasifikasi:** Defective Implementation · **Area:** Security / Privacy / Multi-tenancy · **UU PDP:** Ya
-> **Branch:** `fix/f01-idor-tenant-scope` · **Status:** ✅ Selesai & terverifikasi
+> **Finding:** F-01 (P0* — P2 if single-tenant) · **Classification:** Defective Implementation · **Area:** Security / Privacy / Multi-tenancy · **UU PDP:** Yes
+> **Branch:** `fix/f01-idor-tenant-scope` · **Status:** ✅ Completed & verified
 
 ---
 
-## 1. Ringkasan
+## 1. Summary
 
-Model `Portfolio`, `PortfolioSkill`, dan `FitGapReport` menyimpan data evaluasi kandidat (evidence quotes, rating AI, override assessor) **tanpa tenant scoping**: tidak ada kolom `tenant_id`, tidak `include TenantScoped`, dan controller memakai `Portfolio.find(params[:id])` langsung.
+The `Portfolio`, `PortfolioSkill`, and `FitGapReport` models store candidate evaluation data (evidence quotes, AI ratings, assessor overrides) **without tenant scoping**: there is no `tenant_id` column, no `include TenantScoped`, and the controller uses `Portfolio.find(params[:id])` directly.
 
-Akibatnya **assessor dari Organization A bisa mengakses dan memanipulasi data Organization B** hanya dengan menebak ID numerik:
+As a result, **an assessor from Organization A can access and manipulate Organization B's data** merely by guessing numeric IDs:
 
-- `GET /api/v1/portfolios/:id/export` — lihat evidence transkrip, level AI, summary
-- `POST /api/v1/portfolios/:id/regenerate_fitgap` — trigger proses mahal pada data org lain
-- `POST /api/v1/portfolios/:id/fitgap` — baca keputusan fit/gap org lain
-- `POST /api/v1/portfolio_skills/:id/override` — **ubah** rating skill kandidat org lain
+- `GET /api/v1/portfolios/:id/export` — view transcript evidence, AI level, summary
+- `POST /api/v1/portfolios/:id/regenerate_fitgap` — trigger an expensive process on another org's data
+- `POST /api/v1/portfolios/:id/fitgap` — read another org's fit/gap decisions
+- `POST /api/v1/portfolio_skills/:id/override` — **modify** another org's candidate skill ratings
 
-Ini paparan data pribadi kandidat lintas batas organisasi — relevan UU PDP (UU No. 27/2022).
+This exposes candidates' personal data across organizational boundaries — relevant to UU PDP (Law No. 27/2022).
 
-## 2. Analisis & Gap ke Kondisi Ideal
+## 2. Analysis & Gap to Ideal
 
-**Akar masalah:** pola tenant-scoping SUDAH ada di codebase (`Session`, `Assessment`, `Vacancy` → `include TenantScoped`), tapi **tidak diterapkan** ke 3 model ini. Jadi ini cacat implementasi, bukan spesifikasi yang hilang.
+**Root cause:** the tenant-scoping pattern ALREADY exists in the codebase (`Session`, `Assessment`, `Vacancy` → `include TenantScoped`), but it was **not applied** to these 3 models. So this is a defective implementation, not a missing specification.
 
-| File | Evidence (sebelum fix) |
+| File | Evidence (before fix) |
 |------|------------------------|
-| `api/app/models/portfolio.rb` | Tidak `include TenantScoped`, tidak ada `tenant_id` |
-| `api/app/models/portfolio_skill.rb` | Tidak `include TenantScoped` |
-| `api/app/models/fit_gap_report.rb` | Tidak `include TenantScoped` |
-| `api/app/controllers/api/v1/portfolios_controller.rb` | `Portfolio.find(params[:id])` tanpa scope tenant |
-| `api/app/controllers/api/v1/portfolio_skills_controller.rb` | `PortfolioSkill.joins(:portfolio).find(params[:id])` tanpa scope tenant |
-| `api/db/schema.rb` | 3 tabel tanpa kolom `tenant_id` |
+| `api/app/models/portfolio.rb` | No `include TenantScoped`, no `tenant_id` |
+| `api/app/models/portfolio_skill.rb` | No `include TenantScoped` |
+| `api/app/models/fit_gap_report.rb` | No `include TenantScoped` |
+| `api/app/controllers/api/v1/portfolios_controller.rb` | `Portfolio.find(params[:id])` without tenant scope |
+| `api/app/controllers/api/v1/portfolio_skills_controller.rb` | `PortfolioSkill.joins(:portfolio).find(params[:id])` without tenant scope |
+| `api/db/schema.rb` | 3 tables without `tenant_id` column |
 
-**Gap ke kondisi ideal:** setiap model berisi data kandidat HARUS (1) punya kolom `tenant_id` + FK ke `organizations`, (2) `include TenantScoped` (auto-scope), (3) controller memakai scope relasional dari `current_tenant`.
+**Gap to ideal:** every model holding candidate data MUST (1) have a `tenant_id` column + FK to `organizations`, (2) `include TenantScoped` (auto-scope), (3) have the controller use relational scope from `current_tenant`.
 
-## 3. Opsi & Trade-off
+## 3. Options & Trade-off
 
-### Opsi A — Kolom `tenant_id` + `TenantScoped` penuh ✅ **DIPILIH**
+### Option A — Full `tenant_id` column + `TenantScoped` ✅ **CHOSEN**
 
-| Dimensi | Penilaian |
+| Dimension | Assessment |
 |---------|-----------|
-| **Product Impact** | Isolasi data kandidat antar-klien terjamin (UU PDP) |
-| **Cost** | Tinggi: 3 migrations + backfill + wrap worker/service |
-| **Maintainability** | Terbaik — satu pola `TenantScoped` di semua model, konsisten dengan Session/Assessment/Vacancy |
-| **Failure Modes** | Create di luar request cycle gagal validasi (fail-safe); migration reversible, backfill diverifikasi |
-| **Contextual Fit** | Konvensi codebase sudah ada; menambah 3 model justru mereduksi kompleksitas mental |
+| **Product Impact** | Candidate data isolation across clients guaranteed (UU PDP) |
+| **Cost** | High: 3 migrations + backfill + worker/service wrap |
+| **Maintainability** | Best — one `TenantScoped` pattern across all models, consistent with Session/Assessment/Vacancy |
+| **Failure Modes** | Create outside the request cycle fails validation (fail-safe); migrations reversible, backfill verified |
+| **Contextual Fit** | Codebase convention already exists; adding 3 models actually reduces mental complexity |
 
-### Opsi B — Scope via join relasi existing ❌ Ditolak
+### Option B — Scope via joins on existing relations ❌ Rejected
 
-Tanpa migrasi; controller ditambah `joins(session: :assessment).where(sessions: { tenant_id: ... })`. Kelemahan: **manual scoping di setiap query** — satu developer lupa scope = IDOR kembali. Join overhead per query. Tidak menyelesaikan akar masalah (model tetap tenancy-unaware). *"Security fix tidak boleh bergantung pada developer ingat scope setiap query."*
+No migration; controllers gain `joins(session: :assessment).where(sessions: { tenant_id: ... })`. Weakness: **manual scoping on every query** — one developer forgetting the scope = IDOR returns. Join overhead per query. Does not solve the root cause (models remain tenancy-unaware). *"A security fix must not rely on developers remembering to scope every query."*
 
-### Opsi C — Controller-level authorization check ❌ Ditolak
+### Option C — Controller-level authorization check ❌ Rejected
 
-`before_action :verify_tenant_access` di controller. Kelemahan: **bypassable** — worker/console/rake/API endpoint baru tanpa check tetap bocor. N+1 queries. Ini *last line of defense*, bukan primary protection; melanggar prinsip **defense in depth**:
+`before_action :verify_tenant_access` in the controller. Weakness: **bypassable** — worker/console/rake/new API endpoints without the check still leak. N+1 queries. This is the *last line of defense*, not primary protection; it violates the **defense in depth** principle:
 
-| Layer | Opsi A | Opsi C |
+| Layer | Option A | Option C |
 |-------|--------|--------|
 | Database | ✅ FK constraint | ❌ |
 | Model | ✅ default_scope | ❌ |
-| Controller | ✅ otomatis via scope | ⚠️ manual check |
+| Controller | ✅ automatic via scope | ⚠️ manual check |
 | Worker | ✅ context required | ❌ bypassable |
 
-### Trade-off yang diterima (Opsi A)
+### Trade-offs accepted (Option A)
 
-| Trade-off | Justifikasi |
+| Trade-off | Justification |
 |-----------|-------------|
-| Migration complexity (~7 jam kerja, backfill critical path) | One-time cost untuk long-term safety |
-| Breaking change (create di luar request cycle gagal) | Fail-safe; hanya 3 callsite, didokumentasikan |
-| Storage (+8MB per 1M rows) | Negligible; indexed filtering justru lebih cepat |
+| Migration complexity (~7 hours of work, backfill critical path) | One-time cost for long-term safety |
+| Breaking change (create outside the request cycle fails) | Fail-safe; only 3 callsites, documented |
+| Storage (+8MB per 1M rows) | Negligible; indexed filtering is actually faster |
 
-## 4. Solusi Diimplementasikan
+## 4. Solution Implemented
 
 **Database layer (3 migrations + schema):**
-1. `add_tenant_id_to_portfolios` — kolom nullable → **backfill via SQL** dari `sessions.tenant_id` → verify NULL = 0 → NOT NULL → FK `ON DELETE CASCADE` → index
-2. `add_tenant_id_to_portfolio_skills` — backfill dari `portfolios.tenant_id` → sama
-3. `add_tenant_id_to_fit_gap_reports` — backfill dari `portfolios.tenant_id` → sama
+1. `add_tenant_id_to_portfolios` — nullable column → **SQL backfill** from `sessions.tenant_id` → verify NULL = 0 → NOT NULL → FK `ON DELETE CASCADE` → index
+2. `add_tenant_id_to_portfolio_skills` — backfill from `portfolios.tenant_id` → same
+3. `add_tenant_id_to_fit_gap_reports` — backfill from `portfolios.tenant_id` → same
 
-Semua migration **reversible** (`down` = drop index/FK/kolom).
+All migrations **reversible** (`down` = drop index/FK/column).
 
 **Model layer:**
 ```ruby
 class Portfolio < ApplicationRecord
   include TenantScoped   # ← automatic default_scope by Current.tenant_id
-  # PortfolioSkill & FitGapReport sama
+  # PortfolioSkill & FitGapReport same
 end
 ```
 
-**Context layer (worker/service — yang sering dilupakan):**
+**Context layer (worker/service — the often-forgotten part):**
 - `PortfolioGeneratorWorker` → wrap `Current.using(tenant_id: session.tenant_id)`
 - `FitGapGeneratorWorker` → wrap `Current.using(tenant_id: ...)`
-- `Sessions::EndHandler#create_portfolio` → wrap (dipanggil dari REST **dan** WebSocket)
+- `Sessions::EndHandler#create_portfolio` → wrap (called from REST **and** WebSocket)
 
-> **AI-Human Verification moment:** generator awal mengusulkan wrap dengan `Current.tenant_id` di dalam worker — **salah**, karena Sidekiq tidak punya request context (nil). Diverifikasi via trace call path → benar: tenant harus di-derive dari relasi `session.tenant_id`. Ini diajarkan brief: *"AI tooling sebagai leverage yang diverifikasi, bukan oracle"*.
+> **AI-Human Verification moment:** the initial generator proposed wrapping the worker with `Current.tenant_id` — **wrong**, because Sidekiq has no request context (nil). Verified via call-path trace → correct: the tenant must be derived from the `session.tenant_id` relation. This is what the brief teaches: *"AI tooling as leverage to be verified, not an oracle"*.
 
 ## 5. Acceptance Criteria & Edge Cases
 
-| # | Kriterium | Input | Expected Behavior | Edge Case |
+| # | Criterion | Input | Expected Behavior | Edge Case |
 |---|-----------|-------|-------------------|-----------|
-| 1 | Isolasi GET | Assessor tenant A akses portfolio B | 404 (anti-enumeration) | ID tak ada → 404 |
-| 2 | Isolasi override | Assessor A override skill portfolio B | 404, tidak ada perubahan data | — |
-| 3 | Migrasi reversible | `up` → `down` | Kolom hilang, data utuh | Rollback saat data ada — aman |
-| 4 | Backfill benar | Hitung `tenant_id IS NULL` | 0 rows | Data tanpa relasi org → flagged, jangan ditebak |
-| 5 | Worker context | Generate tanpa `Current.using` | Gagal validasi (`tenant_id can't be blank`) | Fail-safe, bukan silent |
+| 1 | GET isolation | Assessor of tenant A accesses portfolio B | 404 (anti-enumeration) | ID doesn't exist → 404 |
+| 2 | Override isolation | Assessor A overrides skill of portfolio B | 404, no data changes | — |
+| 3 | Migration reversible | `up` → `down` | Column removed, data intact | Rollback with data present — safe |
+| 4 | Backfill correct | Count `tenant_id IS NULL` | 0 rows | Data without org relation → flagged, not guessed |
+| 5 | Worker context | Generate without `Current.using` | Validation fails (`tenant_id can't be blank`) | Fail-safe, not silent |
 
-## 6. Test & Verifikasi
+## 6. Tests & Verification
 
-**RSpec (25 examples, semua passing):**
+**RSpec (25 examples, all passing):**
 
-| Area | File | Cakupan |
+| Area | File | Coverage |
 |------|------|---------|
-| Model | `spec/models/portfolio_spec.rb` | default_scope filtering, cross-tenant → RecordNotFound, auto-assign, validasi tanpa context |
-| Model | `spec/models/portfolio_skill_spec.rb` | sama |
-| Model | `spec/models/fit_gap_report_spec.rb` | sama |
+| Model | `spec/models/portfolio_spec.rb` | default_scope filtering, cross-tenant → RecordNotFound, auto-assign, validation without context |
+| Model | `spec/models/portfolio_skill_spec.rb` | same |
+| Model | `spec/models/fit_gap_report_spec.rb` | same |
 | Request | `spec/requests/portfolios_spec.rb` | `GET /export` cross-tenant → 404; same-tenant → 200; `POST /regenerate_fitgap` & `/fitgap` cross-tenant → 404 |
 
-**Seeded fault test** ✅ — hapus sementara `include TenantScoped` di scratch branch → spec `cross-tenant access raises RecordNotFound` **GAGAL** (test menangkap regresi) → revert → hijau lagi. History visible di branch.
+**Seeded fault test** ✅ — temporarily removed `include TenantScoped` on a scratch branch → spec `cross-tenant access raises RecordNotFound` **FAILED** (test caught the regression) → reverted → green again. History visible on the branch.
 
-**Manual:** repro IDOR (assessor Beta akses portfolio Alpha → 404), backfill `tenant_id IS NULL` = 0, FK constraint active.
+**Manual:** IDOR repro (assessor Beta accesses portfolio Alpha → 404), backfill `tenant_id IS NULL` = 0, FK constraint active.
 
 ## 7. AI-Human Verification
 
-| Momen | Detail |
+| Moment | Detail |
 |-------|--------|
-| **AI salah (risky)** | Usulan wrap worker pakai `Current.tenant_id` — asumsi salah, worker Sidekiq tidak punya request context |
-| **Cara verifikasi** | Trace call path `PortfolioGeneratorWorker` → tidak ada HTTP middleware → `Current.tenant_id` nil; konfirmasi error validasi saat run |
-| **Koreksi** | `Current.using(tenant_id: session.tenant_id)` — derive dari relasi, bukan context luar. Penerapan yang sama di `FitGapGeneratorWorker` & `Sessions::EndHandler` |
-| **Pelajaran** | Tooling AI = leverage yang harus diverifikasi; pattern seperti `Current.using` perlu dipahami konteks eksekusinya (HTTP vs background job) |
+| **AI mistake (risky)** | Proposal to wrap the worker with `Current.tenant_id` — wrong assumption, a Sidekiq worker has no request context |
+| **How verified** | Trace call path `PortfolioGeneratorWorker` → no HTTP middleware → `Current.tenant_id` nil; confirm the validation error at runtime |
+| **Correction** | `Current.using(tenant_id: session.tenant_id)` — derive from the relation, not the outer context. Same applied in `FitGapGeneratorWorker` & `Sessions::EndHandler` |
+| **Lesson** | AI tooling = leverage that must be verified; patterns like `Current.using` require understanding their execution context (HTTP vs background job) |
 
 ---
 
-*F-01 selesai: 25 RSpec passing, seeded fault terbukti, siap merge ke umbrella.*
+*F-01 completed & verified: 25 RSpec passing, seeded fault proven, ready to merge to umbrella.*
