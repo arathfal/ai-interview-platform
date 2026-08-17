@@ -1,102 +1,102 @@
-# F-05 — Invite Link Kandidat Menunjuk ke Host Backend, Bukan Web App
+# F-05 — Candidate Invite Link Points to the Backend Host, Not the Web App
 
-> **Finding:** F-05 (P1) · **Klasifikasi:** Defective Implementation · **Area:** Product / UX / Configuration · **UU PDP:** Tidak langsung
-> **Branch:** `fix/f05-invite-link-host` · **Status:** ✅ Selesai & terverifikasi
+> **Finding:** F-05 (P1) · **Classification:** Defective Implementation · **Area:** Product / UX / Configuration · **UU PDP:** Not directly
+> **Branch:** `fix/f05-invite-link-host` · **Status:** ✅ Completed & verified
 
 ---
 
-## 1. Ringkasan
+## 1. Summary
 
-`Session#invite_url` membangun link undangan kandidat dari `APP_BASE_URL`, yang menunjuk ke **host API** (`http://localhost:3001` di dev, `https://ai-interview-api.rakamin.com` di produksi). Padahal route `/interview/:token` hanya dimiliki oleh **web app** (React/Vite, `web/src/App.tsx`). Akibatnya link yang dikirim ke kandidat membuka 404 / response JSON API, bukan halaman wawancara — **workflow inti (undang → kandidat mulai interview) mati**.
+`Session#invite_url` builds the candidate invite link from `APP_BASE_URL`, which points to the **API host** (`http://localhost:3001` in dev, `https://ai-interview-api.rakamin.com` in production). But the `/interview/:token` route only exists in the **web app** (React/Vite, `web/src/App.tsx`). As a result, the link sent to candidates opens a 404 / API JSON response, not the interview page — **the core workflow (invite → candidate starts interview) is broken**.
 
-Ini **defective implementation**, bukan fitur hilang: kode generation link sudah ada dan `APP_BASE_URL` sudah di-set, tetapi satu env var menjalankan **dua peran** (base URL API + basis invite link) dan menunjuk host yang salah untuk peran kedua.
+This is a **defective implementation**, not a missing feature: the link-generation code already exists and `APP_BASE_URL` is set, but one env var serves **two roles** (API base URL + invite-link base) and points to the wrong host for the second role.
 
-**Dampak:** kandidat tidak bisa memulai interview dari link undangan. Produk inti (AI interview) tidak bisa dipakai lewat jalur yang dituju kandidat. Tidak ada data pribadi yang bocor (link memuat token invite, bukan data), jadi UU PDP tidak terdampak langsung — tapi kepercayaan terhadap alur undangan rusak.
+**Impact:** candidates cannot start the interview from the invite link. The core product (AI interview) cannot be used through the candidate-facing path. No personal data leaks (the link carries an invite token, not data), so UU PDP is not directly affected — but trust in the invitation flow is broken.
 
-## 2. Analisis & Gap ke Kondisi Ideal
+## 2. Analysis & Gap to Ideal
 
-**Akar masalah:** konsep URL disatukan. `APP_BASE_URL` dipakai sebagai base URL umum **dan** basis invite link, namun nilai yang dipakai menunjuk API. Tidak ada konsep "frontend URL" terpisah (Constraint Signal **CS-4**).
+**Root cause:** URL concepts were merged. `APP_BASE_URL` is used both as the general base URL **and** the invite-link base, yet the value points to the API. There is no separate "frontend URL" concept (Constraint Signal **CS-4**).
 
 | File | Evidence | Gap |
 |------|----------|-----|
-| `api/app/models/session.rb:28-31` | `invite_url` → `ENV.fetch('APP_BASE_URL', 'http://localhost:3001')` — host API | Invite link menunjuk API, bukan web app |
-| `api/config/application.yml.sample:21` | `APP_BASE_URL: "http://localhost:3001"` | Nilai sample = API |
-| `api/k8s/configmap.yaml:20` | `APP_BASE_URL: https://ai-interview-api.rakamin.com` — subdomain API | Produksi juga salah host |
-| `api/config/routes.rb` | Tidak ada route `/interview/:token` — hanya `/api/v1/*` | API tidak punya halaman itu |
-| `web/src/App.tsx:57` | Route `/interview/:token` ada di React app | Frontend yang punya halaman interview |
+| `api/app/models/session.rb:28-31` | `invite_url` → `ENV.fetch('APP_BASE_URL', 'http://localhost:3001')` — API host | Invite link points to API, not web app |
+| `api/config/application.yml.sample:21` | `APP_BASE_URL: "http://localhost:3001"` | Sample value = API |
+| `api/k8s/configmap.yaml:20` | `APP_BASE_URL: https://ai-interview-api.rakamin.com` — API subdomain | Production also wrong host |
+| `api/config/routes.rb` | No `/interview/:token` route — only `/api/v1/*` | API has no such page |
+| `web/src/App.tsx:57` | `/interview/:token` route exists in the React app | The frontend owns the interview page |
 
-**Gap ke kondisi ideal:**
-1. Pemisahan jelas: `FRONTEND_BASE_URL` (untuk UI/invite) vs `APP_BASE_URL` (untuk API).
-2. Invite URL mengarah ke frontend: `https://ai-interview.rakamin.com/interview/:token`.
-3. README mendokumentasikan perbedaan kedua env var dengan jelas.
+**Gap to ideal:**
+1. Clear separation: `FRONTEND_BASE_URL` (for UI/invite) vs `APP_BASE_URL` (for API).
+2. Invite URL points to the frontend: `https://ai-interview.rakamin.com/interview/:token`.
+3. README documents the difference between both env vars clearly.
 
-## 3. Opsi & Trade-off
+## 3. Options & Trade-off
 
-### Opsi A — Perkenalkan `FRONTEND_BASE_URL` terpisah ✅ **DIPILIH**
+### Option A — Introduce a separate `FRONTEND_BASE_URL` ✅ **CHOSEN**
 
-Tambah env var `FRONTEND_BASE_URL`; `session.rb#invite_url` memakai `ENV.fetch('FRONTEND_BASE_URL', default_frontend)`. Update `configmap.yaml`, `application.yml.sample`, README.
+Add env var `FRONTEND_BASE_URL`; `session.rb#invite_url` uses `ENV.fetch('FRONTEND_BASE_URL', default_frontend)`. Update `configmap.yaml`, `application.yml.sample`, README.
 
-| Dimensi | Penilaian |
+| Dimension | Assessment |
 |---------|-----------|
-| **Product Impact vs Cost** | Kandidat langsung bisa buka halaman interview — workflow inti jalan. Cost rendah (1 env var + 1 line + config/README). |
-| **Long-term Maintainability** | Menuntaskan CS-4: dua var terpisah, tidak ambigu; API URL dan frontend URL tidak bisa saling tertukar. |
-| **Failure Modes** | Jika `FRONTEND_BASE_URL` lupa di-set di deploy → default dev yang jelas (bukan silent 404). Default bisa "gagal loud" di log dev. |
-| **Contextual Fit** | Paling tepat: menyederhanakan semantics, mencegah kejadian ulang, cocok dengan CS-4. Perubahan minimal & terlokalisir untuk deadline. |
+| **Product Impact vs Cost** | Candidates can directly open the interview page — the core workflow works. Low cost (1 env var + 1 line + config/README). |
+| **Long-term Maintainability** | Resolves CS-4: two separate, unambiguous vars; API URL and frontend URL cannot be swapped. |
+| **Failure Modes** | If `FRONTEND_BASE_URL` is forgotten at deploy → clear dev default (not silent 404). Default can "fail loud" in dev logs. |
+| **Contextual Fit** | Most appropriate: simplifies semantics, prevents recurrence, fits CS-4. Minimal & localized change for the deadline. |
 
-### Opsi B — Ubah nilai `APP_BASE_URL` saja ke host frontend ❌ Ditolak
+### Option B — Just change the `APP_BASE_URL` value to the frontend host ❌ Rejected
 
-Cepat (ubah nilai config doang), tapi `APP_BASE_URL` tetap ambigu (dipakai untuk API base + frontend URL). CS-4 tidak tuntas; berisiko dipakai keliru di tempat lain — mis. kode internal yang memanggil API via `APP_BASE_URL` malah menembak frontend.
+Fast (change only the config value), but `APP_BASE_URL` stays ambiguous (used for API base + frontend URL). CS-4 not resolved; risky elsewhere — e.g. internal code calling the API via `APP_BASE_URL` would hit the frontend instead.
 
-### Trade-off yang diterima
+### Trade-offs accepted
 
-| Trade-off | Justifikasi |
+| Trade-off | Justification |
 |-----------|-------------|
-| Satu env var baru harus diset di tiap deploy | Default dev yang benar (localhost:5173) menjadikan dev aman; produksi di-set eksplisit di configmap. |
-| Tidak ada refactor frontend | Tidak diperlukan — frontend sudah punya route yang benar; cukup mengarahkan link ke sana. |
+| One new env var must be set in each deploy | Correct dev default (localhost:5173) keeps dev safe; production is set explicitly in the configmap. |
+| No frontend refactor | Not needed — the frontend already has the correct route; just point the link there. |
 
-## 4. Solusi Diimplementasikan
+## 4. Solution Implemented
 
-- **`api/app/models/session.rb`:** `invite_url` kini `ENV.fetch('FRONTEND_BASE_URL', 'http://localhost:5173')` → `"#{base}/interview/#{invite_token}"`. Host invite = frontend dev (5173) / frontend prod.
-- **`api/config/application.yml.sample`:** tambah `FRONTEND_BASE_URL: "http://localhost:5173"`; komentar `APP_BASE_URL` dijelaskan sebagai base URL API (bukan untuk invite link).
-- **`api/k8s/configmap.yaml`:** tambah `FRONTEND_BASE_URL: https://ai-interview.rakamin.com` (frontend prod).
-- **`api/README.md`:** dua baris env var terpisah — `APP_BASE_URL` (API) dan `FRONTEND_BASE_URL` (frontend, dipakai invite link `FRONTEND_BASE_URL/interview/:token`).
-- **`api/spec/models/session_spec.rb`:** spec model baru (3 contoh) untuk `#invite_url`.
+- **`api/app/models/session.rb`:** `invite_url` now `ENV.fetch('FRONTEND_BASE_URL', 'http://localhost:5173')` → `"#{base}/interview/#{invite_token}"`. Invite host = frontend dev (5173) / frontend prod.
+- **`api/config/application.yml.sample`:** added `FRONTEND_BASE_URL: "http://localhost:5173"`; `APP_BASE_URL` comment now explains it as the API base URL (not for invite links).
+- **`api/k8s/configmap.yaml`:** added `FRONTEND_BASE_URL: https://ai-interview.rakamin.com` (frontend prod).
+- **`api/README.md`:** two separate env var lines — `APP_BASE_URL` (API) and `FRONTEND_BASE_URL` (frontend, used for the invite link `FRONTEND_BASE_URL/interview/:token`).
+- **`api/spec/models/session_spec.rb`:** new model spec (3 examples) for `#invite_url`.
 
-**Keputusan teknis kunci:** memisahkan dua concern URL (API base vs frontend) sehingga tidak mungkin saling terkontaminasi. Default frontend (5173) cocok dengan port dev web app (lihat `api/README.md` & `web/README.md`).
+**Key technical decision:** separating the two URL concerns (API base vs frontend) so they cannot contaminate each other. Frontend default (5173) matches the web app dev port (see `api/README.md` & `web/README.md`).
 
-> **AI-Human Verification:** saat menulis komentar `application.yml.sample`, sempat ada typo ("backed by figures") yang diperbaiki sebelum selesai; tidak ada kesalahan logika yang memengaruhi perilaku pada finding ini. Detail di section 7.
+> **AI-Human Verification:** while writing the `application.yml.sample` comment, there was a typo ("backed by figures") fixed before finishing; no logic error affecting behavior in this finding. Details in section 7.
 
 ## 5. Acceptance Criteria & Edge Cases
 
-| # | Kriterium | Input | Expected Behavior | Edge Case |
+| # | Criterion | Input | Expected Behavior | Edge Case |
 |---|-----------|-------|-------------------|-----------|
-| 1 | Invite URL menunjuk frontend | Create session | `invite_url` = `FRONTEND_BASE_URL + /interview/:token` | env kosong → default frontend dev (5173) benar |
-| 2 | API base tetap benar | Request API / baca env | `APP_BASE_URL` tetap API (tak terpengaruh) | — |
-| 3 | Prod config updated | Deploy | configmap punya `FRONTEND_BASE_URL` benar | lupa set → fallback dev jelas, bukan 404 silent |
-| 4 | README di-update | Dok | dua env var didokumentasikan | — |
-| 5 | Host API tidak bocor ke invite link | `APP_BASE_URL` di-set API | invite_url tidak mengandung host API | regression terjaga oleh spec |
+| 1 | Invite URL points to the frontend | Create session | `invite_url` = `FRONTEND_BASE_URL + /interview/:token` | empty env → correct frontend dev default (5173) |
+| 2 | API base stays correct | API request / read env | `APP_BASE_URL` remains API (unaffected) | — |
+| 3 | Prod config updated | Deploy | configmap has correct `FRONTEND_BASE_URL` | forgotten → clear dev fallback, not silent 404 |
+| 4 | README updated | Docs | both env vars documented | — |
+| 5 | API host does not leak into the invite link | `APP_BASE_URL` set to API | invite_url contains no API host | regression guarded by spec |
 
-## 6. Test & Verifikasi
+## 6. Tests & Verification
 
-**RSpec — `api/spec/models/session_spec.rb` (3 contoh, 0 failure):**
-- ✅ `invite_url` menggunakan `FRONTEND_BASE_URL` (host web app, e.g. `https://ai-interview.rakamin.com`).
-- ✅ Default saat env kosong = `http://localhost:5173` (frontend dev, bukan 3001/API).
-- ✅ Regression: mengubah `APP_BASE_URL` tidak memengaruhi `invite_url`; host API tidak bocor.
+**RSpec — `api/spec/models/session_spec.rb` (3 examples, 0 failures):**
+- ✅ `invite_url` uses `FRONTEND_BASE_URL` (web app host, e.g. `https://ai-interview.rakamin.com`).
+- ✅ Default when env is empty = `http://localhost:5173` (frontend dev, not 3001/API).
+- ✅ Regression: changing `APP_BASE_URL` does not affect `invite_url`; API host does not leak.
 
 **Full suite: 41 examples, 0 failures.**
 
-**Seeded fault test:** secara sementara mengembalikan `invite_url` ke `ENV.fetch('APP_BASE_URL', 'http://localhost:3001')` → **semua 3 contoh GAGAL** (expected frontend host, got `localhost:3001`) → membuktikan test benar-benar menangkap F-05 → **revert**, 41 lulus lagi.
+**Seeded fault test:** temporarily restored `invite_url` to `ENV.fetch('APP_BASE_URL', 'http://localhost:3001')` → **all 3 examples FAILED** (expected frontend host, got `localhost:3001`) → proving the test truly catches F-05 → **reverted**, 41 pass again.
 
-**Manual (terverifikasi):** generate invite link → baca `invite_url` dari response/`rails runner` → host-nya `http://localhost:5173`/frontend, bukan API. Link yang di-generate dibuka di browser dan halaman interview React tampil (bukan 404/JSON API).
+**Manual (verified):** generate an invite link → read `invite_url` from response/`rails runner` → host is `http://localhost:5173`/frontend, not API. The generated link was opened in the browser and the React interview page rendered (not 404/JSON API).
 
-> **Catatan status:** implementasi selesai, seluruh test otomatis lulus (41/41), dan **sudah diverifikasi** manual lewat UI (link invite menunjuk frontend & halaman interview tampil).
+> **Status note:** implementation complete, all automated tests pass (41/41), and **manually verified** via UI (invite link points to the frontend & interview page renders).
 
 ## 7. AI-Human Verification
 
-**Momen AI salah/risky:** saat menulis komentar di `api/config/application.yml.sample`, sempat tertulis kalimat ambigu ("backed by figures") yang bisa menyesatkan makna `APP_BASE_URL`. Ini diperbaiki menjadi penjelasan netral bahwa `APP_BASE_URL` adalah base URL API (bukan untuk invite link).
+**AI mistake/risky moment:** while writing the comment in `api/config/application.yml.sample`, an ambiguous sentence ("backed by figures") appeared that could mislead the meaning of `APP_BASE_URL`. It was fixed to a neutral explanation that `APP_BASE_URL` is the API base URL (not for invite links).
 
-**Verifikasi:** kesalahan hanya pada komentar dokumentasi, tanpa efek pada perilaku runtime; tetap dikoreksi agar dokumentasi tidak membingungkan operator deploy.
+**Verification:** the mistake was only in documentation comments, with no effect on runtime behavior; still corrected so the documentation does not confuse deploy operators.
 
 ---
 
-*F-05 selesai & terverifikasi: link invite menunjuk frontend, 41 RSpec passing, seeded fault terbukti.*
+*F-05 completed & verified: invite link points to the frontend, 41 RSpec passing, seeded fault proven.*
