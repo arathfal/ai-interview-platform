@@ -144,7 +144,7 @@ export default function AssessmentNewPage() {
             defaultValue="45"
             onValueChange={(v) => setValue("time_limit_min", Number(v))}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full md:w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -164,7 +164,7 @@ export default function AssessmentNewPage() {
             defaultValue="en"
             onValueChange={(v) => setValue("language", v as "en" | "id")}
           >
-            <SelectTrigger className="w-40">
+            <SelectTrigger className="w-full md:w-40">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -210,7 +210,7 @@ export default function AssessmentNewPage() {
             </DndContext>
           )}
 
-          <div className="flex gap-2">
+          <div className="flex flex-row gap-2">
             <Button
               type="button"
               variant="outline"
@@ -218,7 +218,7 @@ export default function AssessmentNewPage() {
               onClick={() => setPickerOpen(true)}
             >
               <Plus className="h-3.5 w-3.5 mr-1" />
-              Add from Skill Taxonomy
+              Add from B7 taxonomy
             </Button>
             <Button
               type="button"
@@ -239,7 +239,7 @@ export default function AssessmentNewPage() {
         )}
 
         {/* Actions */}
-        <div className="flex justify-end gap-2">
+        <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
           <Button
             type="button"
             variant="outline"
