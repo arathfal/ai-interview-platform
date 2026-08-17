@@ -33,6 +33,11 @@ RSpec.configure do |config|
   # Remove this line if you're not using ActiveRecord or ActiveRecord fixtures
   config.fixture_path = Rails.root.join('spec/fixtures')
 
+  # Rate limiting (Rack::Attack) is a production guard — it must not throttle
+  # the test suite. F-03's authentication spec issues many login requests per
+  # run and would otherwise hit the 5/min per-IP throttle (429).
+  config.before(:suite) { Rack::Attack.enabled = false }
+
   # If you're not using ActiveRecord, or you'd prefer not to run each of your
   # examples within a transaction, remove the following line or assign false
   # instead of true.

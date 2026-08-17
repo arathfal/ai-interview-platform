@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useSetAtom } from "jotai";
 import { authAtom, saveToken } from "@/stores/authAtom";
 import { authApi } from "@/services/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Loader2 } from "lucide-react";
 
 export default function LoginPage() {
@@ -19,15 +20,22 @@ export default function LoginPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
+
     setLoading(true);
     try {
+      // F-03 phase 2: clean login — tenant is derived from the account's
+      // organization server-side, there is no tenant input anymore.
       const res = await authApi.login({ email, password });
       const token = res.data.token;
       saveToken(token);
       setAuth({ token });
       navigate("/assessments");
-    } catch {
-      setError("Invalid email or password.");
+    } catch (err) {
+      // F-03 AC#9: surface the backend error (e.g. account not assigned to an
+      // organization) instead of a misleading generic credential message.
+      const backendMessage = (err as { response?: { data?: { errors?: Array<{ message?: string }> } } })
+        ?.response?.data?.errors?.[0]?.message;
+      setError(backendMessage ?? "Invalid email or password.");
     } finally {
       setLoading(false);
     }
@@ -56,9 +64,8 @@ export default function LoginPage() {
 
           <div className="space-y-1.5">
             <Label htmlFor="password">Password</Label>
-            <Input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
@@ -74,6 +81,13 @@ export default function LoginPage() {
           </Button>
         </form>
 
+        {/* F-03 phase 2 AC#7: signup is a secondary action — CTA below the button. */}
+        <p className="text-center text-sm text-muted-foreground">
+          Don&apos;t have an account?{" "}
+          <Link to="/signup" className="text-primary hover:underline">
+            Sign up
+          </Link>
+        </p>
       </div>
     </div>
   );

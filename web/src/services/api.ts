@@ -19,6 +19,9 @@ api.interceptors.request.use((config) => {
 
 // Unwrap backend envelope: { data: { ... } } → { ... }
 // On 401/403, clear stored credentials and redirect to login.
+// The login endpoint itself is excluded: a failed login (e.g. unknown tenant
+// scheme) must surface its backend error message in the login UI instead of
+// reloading the page (F-03 AC#8).
 api.interceptors.response.use(
   (response) => {
     if (response.data && typeof response.data === "object" && "data" in response.data) {
@@ -27,7 +30,8 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    if (error.response?.status === 401 || error.response?.status === 403) {
+    const isLoginRequest = error.config?.url?.includes("/auth/login");
+    if ((error.response?.status === 401 || error.response?.status === 403) && !isLoginRequest) {
       clearToken();
       window.location.href = "/login";
     }
