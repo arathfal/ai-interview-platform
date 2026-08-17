@@ -118,7 +118,6 @@ describe("SignUpPage — organization dropdown signup (F-03 phase 2)", () => {
       expect(signupMock).toHaveBeenCalledWith({
         email: "new@test.corp",
         password: "Password123!",
-        role: "user",
         organization_id: 2,
       });
     });

@@ -42,14 +42,12 @@ describe("authApi.signup (F-03 phase 2 — organization dropdown)", () => {
     await authApi.signup({
       email: "a@b.c",
       password: "secret",
-      role: "admin",
       organization_id: 7,
     });
 
     expect(mock).toHaveBeenCalledWith("/auth/signup", {
       email: "a@b.c",
       password: "secret",
-      role: "admin",
       organization_id: 7,
     });
   });

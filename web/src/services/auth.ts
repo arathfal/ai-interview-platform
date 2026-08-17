@@ -8,7 +8,6 @@ export interface LoginPayload {
 export interface SignupPayload {
   email: string;
   password: string;
-  role: "admin" | "user";
   organization_id: number;
 }
 
