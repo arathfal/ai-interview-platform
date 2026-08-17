@@ -46,7 +46,8 @@ RSpec.describe 'Auth signup (F-03 phase 2)', type: :request do
     signup(params: { organization_id: 999_999 })
 
     expect(response).to have_http_status(:unprocessable_entity)
-    expect(JSON.parse(response.body)['errors'][0]['message']).to eq('Organization not found')
+    expect(JSON.parse(response.body).dig('error', 'code')).to eq('validation_failed')
+    expect(JSON.parse(response.body).dig('error', 'message')).to eq('Organization not found')
     expect(User.find_by(email: 'new@test.corp')).to be_nil
   end
 
@@ -54,7 +55,7 @@ RSpec.describe 'Auth signup (F-03 phase 2)', type: :request do
     signup(params: { organization_id: nil })
 
     expect(response).to have_http_status(:unprocessable_entity)
-    expect(JSON.parse(response.body)['errors'][0]['message']).to eq('Organization is required')
+    expect(JSON.parse(response.body).dig('error', 'message')).to eq('Organization is required')
   end
 
   it 'rejects a duplicate email with 422' do
@@ -63,7 +64,7 @@ RSpec.describe 'Auth signup (F-03 phase 2)', type: :request do
     signup
 
     expect(response).to have_http_status(:unprocessable_entity)
-    expect(JSON.parse(response.body)['errors'][0]['message']).to match(/Email/)
+    expect(JSON.parse(response.body).dig('error', 'message')).to match(/Email/)
     expect(User.where(email: 'new@test.corp').count).to eq(1)
   end
 
