@@ -144,7 +144,7 @@ export default function LiveMonitorPage() {
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
-      <div className="flex items-start justify-between">
+      <div className="flex gap-3 items-start justify-between">
         <div className="space-y-1">
           <div className="flex items-center gap-2">
             <Link to={`/assessments/${id}/invite`} className="text-muted-foreground hover:text-foreground">
@@ -157,7 +157,7 @@ export default function LiveMonitorPage() {
           )}
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           {startedAt && sessionActive && <ElapsedTimer startedAt={startedAt} />}
           <span className={cn(
             "flex items-center gap-1 text-xs",
@@ -203,7 +203,7 @@ export default function LiveMonitorPage() {
           ) : (
             configuredSkills.map((skill) => (
               <div key={skill.id ?? skill.skill_label} className="space-y-1.5">
-                <div className="flex items-center justify-between text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-sm">
                   <span className="font-medium">{skill.skill_label}</span>
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     {skill.probe_count > 0 && (
@@ -236,7 +236,7 @@ export default function LiveMonitorPage() {
                 </p>
                 {discoveredSkills.map((skill) => (
                   <div key={skill.id ?? skill.skill_label} className="space-y-1.5">
-                    <div className="flex items-center justify-between text-sm">
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-sm">
                       <span className="flex items-center gap-1">
                         <Zap className="h-3 w-3 text-amber-500" />
                         {skill.skill_label}
