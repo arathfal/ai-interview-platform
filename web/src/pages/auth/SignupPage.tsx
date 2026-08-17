@@ -97,7 +97,7 @@ export default function SignupPage() {
   const canSubmit = !orgsLoading && !orgsEmpty;
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="min-h-screen flex items-center justify-center bg-background px-2">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center">
           <h1 className="text-2xl font-bold">AI Interview</h1>
