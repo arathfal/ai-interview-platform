@@ -15,7 +15,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { assessmentsApi } from "@/services/assessments";
 import { LEVEL_LABELS } from "@/utils/constants";
-import { ArrowLeft, Copy, Check, Eye, Pencil, Clock, Plus, UserRound } from "lucide-react";
+import { Alert } from "@/components/ui/alert";
+import { extractApiError } from "@/lib/apiErrors";
+import { toast } from "@/stores/toastStore";
+import { ArrowLeft, Copy, Check, Eye, Pencil, Clock, Plus, UserRound, RefreshCw, Loader2 } from "lucide-react";
 import type { Assessment, Session } from "@/types";
 
 function SessionRow({
@@ -132,21 +135,39 @@ export default function AssessmentInvitePage() {
   const [newSessionCopied, setNewSessionCopied] = useState(false);
   const [showInviteDialog, setShowInviteDialog] = useState(false);
   const [candidateNameInput, setCandidateNameInput] = useState("");
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+
+  const loadPage = useCallback(async () => {
+    setLoadError(null);
+    try {
+      const [aRes, sRes] = await Promise.all([
+        assessmentsApi.get(Number(id)),
+        assessmentsApi.getSessions(Number(id)),
+      ]);
+      setAssessment(aRes.data.assessment);
+      setSessions(sRes.data.sessions);
+    } catch (e) {
+      // F-26: never silently swallow a failed page load — show an inline
+      // banner with a retry action instead of an empty page with no feedback.
+      setLoadError(extractApiError(e).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
 
   const loadSessions = useCallback(async () => {
-    const res = await assessmentsApi.getSessions(Number(id));
-    setSessions(res.data.sessions);
+    try {
+      const res = await assessmentsApi.getSessions(Number(id));
+      setSessions(res.data.sessions);
+    } catch {
+      // Polling is best-effort — the initial load already surfaced errors.
+    }
   }, [id]);
 
   useEffect(() => {
-    Promise.all([
-      assessmentsApi.get(Number(id)),
-      assessmentsApi.getSessions(Number(id)),
-    ]).then(([aRes, sRes]) => {
-      setAssessment(aRes.data.assessment);
-      setSessions(sRes.data.sessions);
-    }).catch(() => {}).finally(() => setLoading(false));
-  }, [id]);
+    loadPage();
+  }, [loadPage]);
 
   // Poll while any session is live or pending
   useEffect(() => {
@@ -158,18 +179,26 @@ export default function AssessmentInvitePage() {
 
   const openInviteDialog = () => {
     setCandidateNameInput("");
+    setInviteError(null);
     setShowInviteDialog(true);
   };
 
+  // NEW-F-01 fix: the dialog stays open until the API call succeeds. On
+  // failure an inline error is shown inside the dialog instead of silently
+  // closing it and leaving the assessor with no feedback.
   const handleInviteCandidate = async () => {
     setCreatingSession(true);
-    setShowInviteDialog(false);
+    setInviteError(null);
     setNewSession(null);
     try {
       const res = await assessmentsApi.createSession(Number(id), candidateNameInput.trim() || undefined);
       const created = res.data.session;
       setNewSession(created);
       setSessions((prev) => [created, ...prev]);
+      setShowInviteDialog(false);
+      toast.success("Invite link created", "Share the link with your candidate.");
+    } catch (e) {
+      setInviteError(extractApiError(e).message);
     } finally {
       setCreatingSession(false);
     }
@@ -200,6 +229,27 @@ export default function AssessmentInvitePage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* Load failure banner with retry (F-26) */}
+      {loadError && (
+        <Alert className="items-center">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-sm">Couldn't load this assessment: {loadError}</p>
+            <Button
+              variant="outline"
+              size="sm"
+              
+              className="shrink-0"
+              onClick={() => {
+                setLoading(true);
+                loadPage();
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+            </Button>
+          </div>
+        </Alert>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
@@ -239,14 +289,23 @@ export default function AssessmentInvitePage() {
               placeholder="e.g. Budi Santoso"
               value={candidateNameInput}
               onChange={(e) => setCandidateNameInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleInviteCandidate()}
+              onKeyDown={(e) => e.key === "Enter" && !creatingSession && handleInviteCandidate()}
               autoFocus
+              disabled={creatingSession}
             />
             <p className="text-xs text-muted-foreground">Optional — helps you identify this session later.</p>
+            {inviteError && (
+              <Alert>
+                <p className="text-sm">Couldn't create the invite: {inviteError}</p>
+              </Alert>
+            )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowInviteDialog(false)}>Cancel</Button>
-            <Button onClick={handleInviteCandidate}>Create Link</Button>
+            <Button variant="outline" onClick={() => setShowInviteDialog(false)} disabled={creatingSession}>Cancel</Button>
+            <Button onClick={handleInviteCandidate} disabled={creatingSession}>
+              {creatingSession && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              Create Link
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
