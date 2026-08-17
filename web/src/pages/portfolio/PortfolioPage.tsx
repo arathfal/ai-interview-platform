@@ -8,6 +8,8 @@ import SkillPortfolioCard from "@/components/portfolio/SkillPortfolioCard";
 import { sessionsApi } from "@/services/sessions";
 import { vacanciesApi } from "@/services/vacancies";
 import { portfoliosApi } from "@/services/portfolios";
+import { extractApiError } from "@/lib/apiErrors";
+import { toast } from "@/stores/toastStore";
 import { usePolling } from "@/hooks/usePolling";
 import { ArrowLeft, Download, Loader2, RefreshCw, Zap, FileText, AlertTriangle } from "lucide-react";
 import type { Portfolio, AssessorOverride, Vacancy } from "@/types";
@@ -23,23 +25,29 @@ export default function PortfolioPage() {
   const [selectedVacancy, setSelectedVacancy] = useState<string>("");
   const [exporting, setExporting] = useState<"pdf" | "json" | null>(null);
   const [candidateName, setCandidateName] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchPortfolio = useCallback(async () => {
-    const res = await sessionsApi.getPortfolio(Number(sessionId));
-    const data = res.data as any;
-    if (data.status === "generating" || data.portfolio?.generation_status === "generating" || data.portfolio?.generation_status === "pending") {
-      setGenerating(true);
-    } else if (data.portfolio) {
-      setPortfolio(data.portfolio);
+    try {
+      const res = await sessionsApi.getPortfolio(Number(sessionId));
+      const data = res.data as any;
+      if (data.status === "generating" || data.portfolio?.generation_status === "generating" || data.portfolio?.generation_status === "pending") {
+        setGenerating(true);
+      } else if (data.portfolio) {
+        setPortfolio(data.portfolio);
+        setGenerating(false);
+        // Build overrides map
+        const overrideMap: Record<number, AssessorOverride> = {};
+        data.portfolio.overrides.forEach((o: AssessorOverride) => {
+          overrideMap[o.portfolio_skill_id] = o;
+        });
+        setOverrides(overrideMap);
+      }
+    } catch (e) {
+      if (!loadError) setLoadError(extractApiError(e).message);
       setGenerating(false);
-      // Build overrides map
-      const overrideMap: Record<number, AssessorOverride> = {};
-      data.portfolio.overrides.forEach((o: AssessorOverride) => {
-        overrideMap[o.portfolio_skill_id] = o;
-      });
-      setOverrides(overrideMap);
     }
-  }, [sessionId]);
+  }, [sessionId, loadError]);
 
   useEffect(() => {
     Promise.all([fetchPortfolio(), vacanciesApi.list(), sessionsApi.get(Number(sessionId))])
@@ -47,7 +55,10 @@ export default function PortfolioPage() {
         setVacancies(vRes.data.vacancies);
         setCandidateName(sRes.data.session.candidate_name ?? null);
       })
-      .catch(() => {})
+      .catch((e) => {
+        // F-26: no silent catch — a failed load must tell the assessor why.
+        setLoadError(extractApiError(e).message);
+      })
       .finally(() => setLoading(false));
   }, [fetchPortfolio, sessionId]);
 
@@ -89,6 +100,10 @@ export default function PortfolioPage() {
         a.click();
         URL.revokeObjectURL(url);
       }
+    } catch (e) {
+      // F-26: export failures surface as a toast with a retry hint instead of
+      // silently doing nothing.
+      toast.error("Export failed", extractApiError(e).message, () => handleExport(format));
     } finally {
       setExporting(null);
     }
@@ -106,6 +121,40 @@ export default function PortfolioPage() {
 
   return (
     <div className="max-w-2xl mx-auto space-y-6">
+      {/* Load failure state with retry (F-26) */}
+      {loadError && (
+        <div role="alert" className="border border-destructive/40 rounded-lg p-10 text-center space-y-3 animate-in fade-in duration-200">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">Couldn't load this portfolio</p>
+            <p className="text-sm text-muted-foreground mt-1">{loadError}</p>
+          </div>
+          <div className="flex items-center justify-center gap-2 pt-1">
+            <Button
+              size="sm"
+              onClick={() => {
+                setLoadError(null);
+                setLoading(true);
+                Promise.all([fetchPortfolio(), vacanciesApi.list(), sessionsApi.get(Number(sessionId))])
+                  .then(([, vRes, sRes]) => {
+                    setVacancies(vRes.data.vacancies);
+                    setCandidateName(sRes.data.session.candidate_name ?? null);
+                  })
+                  .catch((e) => setLoadError(extractApiError(e).message))
+                  .finally(() => setLoading(false));
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => navigate(`/assessments/${id}/invite`)}>
+              <ArrowLeft className="h-3.5 w-3.5 mr-1.5" /> Back
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-2">
