@@ -127,4 +127,29 @@ describe("LoginPage — tenant-implicit login (F-03 phase 2)", () => {
     const cta = screen.getByRole("link", { name: /sign up/i });
     expect(cta).toHaveAttribute("href", "/signup");
   });
+
+  it("blocks submit and shows field errors on empty submit (RHF validation)", async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(await screen.findByText("Email is required.")).toBeInTheDocument();
+    expect(screen.getByText("Password is required.")).toBeInTheDocument();
+    // RHF validation blocks the API call entirely.
+    expect(loginMock).not.toHaveBeenCalled();
+    expect(navigateMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the email format error on a malformed address (RHF mirror of backend)", async () => {
+    const user = userEvent.setup();
+    renderLogin();
+
+    const emailInput = screen.getByLabelText(/email/i);
+    await user.type(emailInput, "not-an-email");
+    await user.click(screen.getByRole("button", { name: /sign in/i }));
+
+    expect(await screen.findByText("Enter a valid email address.")).toBeInTheDocument();
+    expect(loginMock).not.toHaveBeenCalled();
+  });
 });

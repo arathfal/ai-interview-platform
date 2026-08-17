@@ -25,6 +25,19 @@ function ResultBadge({ comparison }: { comparison: SkillComparison }) {
 }
 
 export default function ComparisonTable({ comparisons }: ComparisonTableProps) {
+  // Empty state — a report with zero skill comparisons must not render a bare
+  // table with no explanation (UI enhancement, Pilar 3).
+  if (comparisons.length === 0) {
+    return (
+      <div className="py-8 text-center space-y-1">
+        <p className="text-sm font-medium">No matching skills for this vacancy</p>
+        <p className="text-xs text-muted-foreground">
+          None of the assessed skills overlap with this vacancy's requirements.
+        </p>
+      </div>
+    );
+  }
+
   // Summary counts
   const matchCount = comparisons.filter((c) => c.result === "match").length;
   const gapCount = comparisons.filter((c) => c.result === "gap").length;

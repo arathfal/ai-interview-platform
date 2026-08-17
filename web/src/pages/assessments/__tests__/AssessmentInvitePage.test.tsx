@@ -113,4 +113,38 @@ describe("AssessmentInvitePage — F-26 & NEW-F-01", () => {
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     });
   });
+
+  it("RHF: blocks submit with a field error for whitespace-only names (dialog stays open)", async () => {
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Frontend Engineer Assessment");
+
+    await user.click(screen.getByRole("button", { name: /invite candidate/i }));
+    await user.type(screen.getByLabelText(/candidate name/i), "   ");
+    await user.click(screen.getByRole("button", { name: /create link/i }));
+
+    expect(await screen.findByText("Candidate name can't be only spaces.")).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    expect(createSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("RHF: empty name is allowed (optional) and submits undefined", async () => {
+    createSessionMock.mockResolvedValue({
+      data: {
+        session: { id: 8, invite_url: "https://invite.test/xyz", candidate_name: null, status: "pending" },
+      },
+    });
+
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByText("Frontend Engineer Assessment");
+
+    await user.click(screen.getByRole("button", { name: /invite candidate/i }));
+    await user.click(screen.getByRole("button", { name: /create link/i }));
+
+    await waitFor(() => {
+      expect(createSessionMock).toHaveBeenCalledWith(42, undefined);
+    });
+    expect(await screen.findByText("https://invite.test/xyz")).toBeInTheDocument();
+  });
 });

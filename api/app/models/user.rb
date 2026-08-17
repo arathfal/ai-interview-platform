@@ -15,6 +15,13 @@ class User < ApplicationRecord
                     format: { with: URI::MailTo::EMAIL_REGEXP }
   validates :role, inclusion: { in: ROLES }
 
+  # Password policy (UI enhancement, Pilar 4): 8–72 characters.
+  # `allow_nil: true` keeps existing users valid on attribute updates that do
+  # not change the password — the policy only applies to newly set passwords
+  # (NIST 800-63B guidance: length over complexity; 72 = bcrypt input limit).
+  validates :password, length: { in: 8..72, message: 'must be between 8 and 72 characters' },
+                       allow_nil: true
+
   before_save :downcase_email
 
   private
