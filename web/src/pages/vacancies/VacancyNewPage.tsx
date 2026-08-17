@@ -9,6 +9,7 @@ import { Separator } from "@/components/ui/separator";
 import LevelRadio from "@/components/assessment/LevelRadio";
 import SkillPicker from "@/components/assessment/SkillPicker";
 import { vacanciesApi } from "@/services/vacancies";
+import { extractApiError } from "@/lib/apiErrors";
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react";
 import type { VacancySkill } from "@/types";
 
@@ -43,7 +44,7 @@ export default function VacancyNewPage() {
       });
       navigate("/vacancies");
     } catch (e: any) {
-      setError(e?.response?.data?.errors?.[0]?.message ?? "Failed to save vacancy.");
+      setError(extractApiError(e).message);
     } finally {
       setSubmitting(false);
     }
