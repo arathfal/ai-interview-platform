@@ -169,6 +169,11 @@ export function useAudioWebSocket({
   const disconnect = useCallback(() => {
     if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     reconnectAttemptsRef.current = RECONNECT_DELAYS.length; // prevent reconnect
+    // Intentional close (candidate ended the interview). The backend replies
+    // with session_ended, but we close immediately after sending end_session,
+    // so that reply never arrives — mark the session ended ourselves so the
+    // async onclose doesn't surface a spurious "connection lost" fatal error.
+    sessionEndedRef.current = true;
     wsRef.current?.close();
   }, []);
 
