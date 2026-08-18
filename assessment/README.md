@@ -9,11 +9,13 @@ This revamp was completed as a candidate applying for **Fullstack Engineer (Fron
 | Item | Status |
 |------|--------|
 | Findings fixed (revamp branch `umbrella/revamp-ai-interview`) | **9** ✅ (F-01, F-02, F-03, F-05, F-06, F-07, F-08, F-13, F-26) |
-| Findings not worked (out of scope / deferred, incl. F-18, F-25) | **17** ⏸ |
+| E2E retest findings fixed (branch `fix/e2e-interview-findings`, PR #12) | **2** ✅ (F-27, F-28) |
+| Config/env drift fixed locally (no code artifact, not in PR) | **1** ✅ local (F-29) |
+| Findings not worked (out of scope / deferred, incl. F-18, F-25) | **18** ⏸ (incl. NEW-F-01) |
 | Voluntary UI enhancement (branch `feat/ui-enhancement`) | **1** ✅ (see `UI-enhancement.md`) |
 | Assessment documentation consistency (docs-only PR) | **1** ✅ (PR #11 — no code change) |
 
-**Total findings audited: 26** (F-01…F-26). Automated test totals at the end of the revamp: **87 RSpec examples + 61 Vitest tests, all passing** (plus `tsc --noEmit` clean).
+**Total findings audited: 30** (F-01…F-26 + NEW-F-01 + E2E retest F-27…F-29, discovered 2026-08-18 during candidate E2E testing). Automated test totals at the end of the revamp: **88 RSpec examples + 62 Vitest tests, all passing** (plus `tsc --noEmit` clean).
 
 ## Findings — status map (join key: original finding number)
 
@@ -45,6 +47,9 @@ This revamp was completed as a candidate applying for **Fullstack Engineer (Fron
 | F-24 | Token sent via WebSocket query string | P3 | ⏸ Not worked |
 | F-25 | Frontend type contract inaccurate vs API | P3 | ⏸ Not worked |
 | F-26 | Inconsistent API error envelope & silent catches in the frontend | P3 | ✅ Fixed — `F-26-unified-error-envelope.md` |
+| F-27 | Candidate cannot start a pending session (WS auth chicken-and-egg) | P1 | ✅ Fixed (E2E retest 2026-08-18) — `F-27-candidate-pending-session-start.md` |
+| F-28 | "End Interview" shows "Connection lost" (WS close race) | P2 | ✅ Fixed (E2E retest 2026-08-18) — `F-28-end-interview-connection-lost.md` |
+| F-29 | Stale Gemini model names in local config → session fails instantly | P2 | ✅ Fixed locally (gitignored config, not in PR) — no code artifact |
 
 ## Pull requests (submission trail)
 
@@ -63,6 +68,7 @@ All PRs are merged into `umbrella/revamp-ai-interview` on the `arathfal/ai-inter
 | [#9 — F-26: Standardize API error envelope and surface silent failures](https://github.com/arathfal/ai-interview-platform/pull/9) | Unified `{ error: { code, message } }` envelope, toast + inline alerts, frontend error normalizer, contract tests (P3, high frontend depth) | +6 RSpec + 20 Vitest; suite 82 + 50 Vitest |
 | [#10 — UI enhancement: mobile responsive + RHF + empty states + password policy](https://github.com/arathfal/ai-interview-platform/pull/10) | Voluntary UI/UX pass across all pages (disqualifier #6): responsive breakpoints, React Hook Form consistency, empty states, 8–72 password contract on both sides | +5 RSpec + 11 Vitest; suite 87 + 61 Vitest |
 | [#11 — docs: translate remaining Indonesian assessment docs to English](https://github.com/arathfal/ai-interview-platform/pull/11) | Consistency only — language cleanup of the assessment deliverables; no code change | — |
+| [#12 — Fix candidate E2E: pending session start + end-interview connection lost](https://github.com/arathfal/ai-interview-platform/pull/12) | F-27 (P1) + F-28 (P2), found in E2E retest as candidate (2026-08-18): pending session could not start (WS auth chicken-and-egg); "End Interview" surfaced a spurious "Connection lost" | +2 RSpec (11) +1 Vitest (6); suite 88 + 62 Vitest |
 
 ## Why the out-of-scope findings were not worked
 
