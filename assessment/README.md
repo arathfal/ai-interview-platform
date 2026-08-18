@@ -10,12 +10,12 @@ This revamp was completed as a candidate applying for **Fullstack Engineer (Fron
 |------|--------|
 | Findings fixed (revamp branch `umbrella/revamp-ai-interview`) | **9** ✅ (F-01, F-02, F-03, F-05, F-06, F-07, F-08, F-13, F-26) |
 | E2E retest findings fixed (branch `fix/e2e-interview-findings`, PR #12) | **2** ✅ (F-27, F-28) |
-| Config/env drift fixed locally (no code artifact, not in PR) | **1** ✅ local (F-29) |
-| Findings not worked (out of scope / deferred, incl. F-18, F-25) | **18** ⏸ (incl. NEW-F-01) |
+| Config/env drift fixed locally (F-29 — note, NOT counted in the 28) | **1** ✅ local (no code artifact, not in PR) |
+| Findings not worked (out of scope / deferred, incl. F-18, F-25) | **17** ⏸ |
 | Voluntary UI enhancement (branch `feat/ui-enhancement`) | **1** ✅ (see `UI-enhancement.md`) |
 | Assessment documentation consistency (docs-only PR) | **1** ✅ (PR #11 — no code change) |
 
-**Total findings audited: 30** (F-01…F-26 + NEW-F-01 + E2E retest F-27…F-29, discovered 2026-08-18 during candidate E2E testing). Automated test totals at the end of the revamp: **88 RSpec examples + 62 Vitest tests, all passing** (plus `tsc --noEmit` clean).
+**Total findings audited: 28** (F-01…F-26 + E2E retest F-27, F-28, discovered 2026-08-18 during candidate E2E testing; NEW-F-01 was resolved within F-26 and F-29 is a config note, neither counted). Automated test totals at the end of the revamp: **88 RSpec examples + 62 Vitest tests, all passing** (plus `tsc --noEmit` clean).
 
 ## Findings — status map (join key: original finding number)
 
@@ -49,7 +49,7 @@ This revamp was completed as a candidate applying for **Fullstack Engineer (Fron
 | F-26 | Inconsistent API error envelope & silent catches in the frontend | P3 | ✅ Fixed — `F-26-unified-error-envelope.md` |
 | F-27 | Candidate cannot start a pending session (WS auth chicken-and-egg) | P1 | ✅ Fixed (E2E retest 2026-08-18) — `F-27-candidate-pending-session-start.md` |
 | F-28 | "End Interview" shows "Connection lost" (WS close race) | P2 | ✅ Fixed (E2E retest 2026-08-18) — `F-28-end-interview-connection-lost.md` |
-| F-29 | Stale Gemini model names in local config → session fails instantly | P2 | ✅ Fixed locally (gitignored config, not in PR) — no code artifact |
+| F-29 | Stale Gemini model names in local config → session fails instantly | P2 | ✅ Fixed locally (config note — not counted in the 28; gitignored config, not in PR) |
 
 ## Pull requests (submission trail)
 
