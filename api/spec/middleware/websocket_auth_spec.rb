@@ -135,7 +135,17 @@ RSpec.describe WebSocketAuth do
       end
     end
 
-    context 'non-active session (F-02 parity: reject)' do
+    context 'non-terminal session (connectable — activated on first connect)' do
+      it 'accepts a PENDING session via invite token (activated by StartHandler on connect)' do
+        pending = create_session(org_alpha, status: 'pending')
+        session, error = middleware.authenticate_websocket(
+          Rack::MockRequest.env_for("/ws/sessions/#{pending.id}/audio?token=#{pending.invite_token}"),
+          pending.id.to_s
+        )
+        expect(error).to be_nil
+        expect(session.id).to eq(pending.id)
+      end
+
       it 'rejects an ENDED session via invite token' do
         ended = create_session(org_alpha, status: 'ended')
         _session, error = middleware.authenticate_websocket(
@@ -145,13 +155,13 @@ RSpec.describe WebSocketAuth do
         expect(error).to eq('Session has ended')
       end
 
-      it 'rejects a PENDING session via invite token (must be active)' do
-        pending = create_session(org_alpha, status: 'pending')
+      it 'rejects a FAILED session via invite token (terminal — no audio injection)' do
+        failed = create_session(org_alpha, status: 'failed')
         _session, error = middleware.authenticate_websocket(
-          Rack::MockRequest.env_for("/ws/sessions/#{pending.id}/audio?token=#{pending.invite_token}"),
-          pending.id.to_s
+          Rack::MockRequest.env_for("/ws/sessions/#{failed.id}/audio?token=#{failed.invite_token}"),
+          failed.id.to_s
         )
-        expect(error).to eq('Session is not active')
+        expect(error).to eq('Session has ended')
       end
     end
   end

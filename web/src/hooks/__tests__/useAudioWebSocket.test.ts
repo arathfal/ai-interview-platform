@@ -176,4 +176,22 @@ describe("useAudioWebSocket — fatal error handling (F-07)", () => {
     // and no new WebSocket was created.
     expect(MockWebSocket.instances.length).toBe(1);
   });
+
+  it("disconnect() after end_session does NOT surface connection lost on close", () => {
+    const props = makeProps();
+    const { result } = renderHook(() => useAudioWebSocket(props as never));
+
+    act(() => {
+      result.current.connect();
+      MockWebSocket.instances[0].emitOpen();
+      result.current.sendJson({ type: "end_session" });
+      // Mock close() fires onclose synchronously — same as the async browser
+      // close after the candidate taps "End Interview".
+      result.current.disconnect();
+    });
+
+    expect(props.onFatalError).not.toHaveBeenCalled();
+    expect(props.onStateChange).not.toHaveBeenCalledWith("error");
+    expect(props.onStateChange).not.toHaveBeenCalledWith("reconnecting");
+  });
 });

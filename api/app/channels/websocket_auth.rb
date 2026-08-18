@@ -62,13 +62,15 @@ module WebSocketAuth
     [nil, "Authentication failed: #{e.message}"]
   end
 
-  # Candidate connector: the invite token IS the credential; session must be active
-  # (a pending/ended/failed session must not accept live audio injection).
+  # Candidate connector: the invite token IS the credential. A PENDING session is
+  # connectable — the audio WS activates it on first connect (StartHandler), which
+  # is the product's only activation path (assessor creates → candidate starts).
+  # Only TERMINAL sessions (ended/failed) must not accept live audio injection:
+  # a leaked token must not corrupt a completed/failed session's transcript.
   def authenticate_candidate(invite_token, session_id)
     session = Session.unscoped.find_by(invite_token: invite_token)
     return [nil, 'Session not found'] unless session
-    return [nil, 'Session has ended'] if session.ended?
-    return [nil, 'Session is not active'] unless session.active?
+    return [nil, 'Session has ended'] if session.status.in?(%w[ended failed])
     return [nil, 'Session ID mismatch'] if session.id.to_s != session_id
 
     [session, nil]
