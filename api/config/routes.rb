@@ -8,8 +8,11 @@ Rails.application.routes.draw do
       # Auth
       post 'auth/login', to: 'authentication#authenticate'
       post 'auth/signup', to: 'authentication#signup'
-      # Organizations (public minimal listing for the signup dropdown — F-03 phase 2)
-      get  'organizations', to: 'organizations#index'
+      post 'auth/admin_invitations/validate', to: 'admin_invitation_validations#create'
+
+      resources :admin_invitations, only: %i[index create] do
+        post :revoke, on: :member
+      end
       # Health check
       get  'health', to: proc { [200, {}, [{ status: 'ok' }.to_json]] }
 
