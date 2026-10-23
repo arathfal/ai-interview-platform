@@ -31,18 +31,36 @@ Gap to ideal condition:
 
 ## 3. Options & Trade-offs
 
-### Option A — Input normalization + per-skill partial save ✅ **CHOSEN**
+| Option | Validation scope | Persistence behavior | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Normalize + partial save** ✅ **CHOSEN & IMPLEMENTED** | All AI fields | Preserve valid skills | Medium | Resilient and transparent |
+| **B — Confidence-only normalization** ❌ Not selected | One field | All-or-nothing remains | Low | Defers the next malformed-field failure |
 
-| Aspect | Assessment |
-|--------|------------|
-| **Product Impact vs Cost** | Portfolio far less likely to fail entirely → assessor is not left waiting with no result; medium cost (service refactor + migration + UI marker). |
-| **Long-term Maintainability** | One sanitization layer for AI output → reusable pattern for future fields; single `normalize_confidence` helper. |
-| **Failure Modes** | Partial save yields an "incomplete" portfolio → handled with an explicit marker (`generation_status: partial` + `generation_error`) so it is never silent. |
-| **Contextual Fit** | Most robust against LLM format uncertainty; portfolio generation is a core feature that must survive model imperfection. |
+### Option A — Input normalization + per-skill partial save ✅ **CHOSEN & IMPLEMENTED**
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | AI output is normalized per field; valid skills persist even if another skill fails, and the UI exposes partial status. |
+| **Product Impact** | Assessors retain usable results instead of losing an entire portfolio. |
+| **Cost & Complexity** | Medium: service refactor, status migration, error summary, UI marker, and tests. |
+| **Long-Term Maintainability** | A central normalization layer supports future AI fields and model changes. |
+| **Failure Modes** | Partial data may be mistaken for complete; normalization can hide model degradation; all skills can still fail. |
+| **Operational Risks** | Model-output drift can increase partial rates and storage of error detail. |
+| **Mitigations** | Explicit partial status/banner, structured errors, metrics, strict normalization, and all-failed handling. |
+| **Contextual Fit** | Core AI generation must tolerate nondeterministic model formatting while remaining honest about omissions. |
 
 ### Option B — Normalize `ai_confidence` only (no partial save) ❌ Rejected
 
-Fast and cheap, but only closes one field. Any other odd non-confidence field can still kill the whole generation — the "all-or-nothing" fragility remains. It defers the problem to the next field.
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Only confidence values are coerced; every other malformed field and the all-or-nothing save path remain unchanged. |
+| **Product Impact** | Fixes the observed value but portfolios can still disappear on the next malformed field. |
+| **Cost & Complexity** | Low and localized. |
+| **Long-Term Maintainability** | Poor because validation grows as field-specific patches. |
+| **Failure Modes** | Other invalid fields abort generation; coercion may accept misleading confidence values. |
+| **Operational Risks** | Recurring model drift causes new production failures and repeated emergency patches. |
+| **Mitigations** | Add field tests and monitoring, though comprehensive normalization and partial persistence are still required. |
+| **Contextual Fit** | Too narrow for inherently uncertain LLM output and a core portfolio workflow. |
 
 ### Trade-offs accepted (for the chosen option)
 

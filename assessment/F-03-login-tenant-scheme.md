@@ -36,27 +36,64 @@ Gap to ideal condition (phase 2):
 
 ## 3. Options & Trade-offs
 
+| Option | Tenant authority | User interaction | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Login tenant input/header** ❌ Revoked | User-entered scheme | Extra login field | Medium | Implemented in phase 1, then revoked after product review |
+| **B — URL tenant routing** ❌ Not selected | URL path | Tenant-specific login URL | High | Disproportionate and still cannot prove ownership |
+| **C — Deployment-configured tenant** ❌ Not selected | Environment variable | None | Low | A wrong deployment value misroutes every login |
+| **D — User↔organization relation** ✅ **CHOSEN & IMPLEMENTED** | Persisted user relation | Tenant-implicit login | Medium–high | Structurally prevents wrong-tenant login |
+
 ### Option A — Tenant input on LoginPage + mandatory header ❌ Initially chosen, then revoked
-Implemented and verified in phase 1 (PR #8 phase 1): the frontend sends `X-Tenant-Scheme`, the backend requires and validates it against `organizations` (401 required / 401 unknown). **Revoked by product review** (2026-08-17):
-- Adds no data validity — the user is unrelated to any org, so the field is an unverifiable claim.
-- Unusual for a 1-account = 1-company flow; adds per-login effort.
-- Not mandated by the brief.
-- Leaves "miss-tenant" (user typing a tenant that isn't theirs) — the exact problem, moved from the system to the user.
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The frontend sends a user-entered `X-Tenant-Scheme`; the backend requires it and checks only that the organization exists. |
+| **Product Impact** | Makes tenant choice visible but adds recurring login effort and still permits users to claim an unrelated organization. |
+| **Cost & Complexity** | Medium: form, header, backend validation, and tests; it was implemented in phase 1 and then revoked. |
+| **Long-Term Maintainability** | Weak because identity and tenancy remain separate inputs that every client must coordinate. |
+| **Failure Modes** | Typos reject valid users, an existing but unrelated scheme misroutes context, and non-browser clients can send arbitrary values. |
+| **Operational Risks** | Support burden rises around tenant discovery and copied links, while the UI creates false confidence in ownership validation. |
+| **Mitigations** | Add organization membership validation and tenant discovery—effectively moving toward Option D. |
+| **Contextual Fit** | Unusual for the product's one-account/one-company flow and not mandated by the brief; product review revoked it. |
 
 ### Option B — URL-based tenant routing (`/:scheme/login`) ❌ Rejected
-Router restructure + redirect/404 + back-compat; cost/risk disproportionate at current scale (1-2 internal orgs). Still cannot verify ownership.
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Tenant context comes from `/:scheme/login`; frontend routing and backend requests carry that context through authentication. |
+| **Product Impact** | Branded/deep-linked tenant entry becomes possible, but wrong links still cannot prove user membership. |
+| **Cost & Complexity** | High: router restructuring, redirects/404s, link migration, compatibility handling, and tests. |
+| **Long-Term Maintainability** | Reasonable for a tenant-branded product, but every auth link and route must preserve scheme semantics. |
+| **Failure Modes** | Stale or mistyped URLs reject users, redirects drop tenant context, and known schemes still allow cross-tenant claims without membership data. |
+| **Operational Risks** | Link distribution and backward compatibility add deployment/support burden at very small tenant scale. |
+| **Mitigations** | Canonical redirects, route validation, compatibility aliases, and membership checks. |
+| **Contextual Fit** | Disproportionate for one or two internal organizations and still does not solve ownership alone. |
 
 ### Option C — Backend-only: reject without header, frontend sends from env ❌ Rejected
-Tenant decision moves to deployment config, not the user; a wrong env breaks all logins with no self-service.
 
-### Option D — User↔organization relation (`users.tenant_id`) + login tenant-implicit + signup dropdown ✅ **CHOSEN (final)**
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The deployed frontend sends one environment-configured tenant header and the backend rejects requests without it. |
+| **Product Impact** | Removes user input, but every user in a deployment is forced into the same tenant whether or not the mapping is correct. |
+| **Cost & Complexity** | Low for a single-tenant deployment, with environment and header wiring. |
+| **Long-Term Maintainability** | Poor as organizations grow because tenancy lives in deployment configuration rather than identity data. |
+| **Failure Modes** | A wrong or missing environment value breaks or misroutes every login, and multiple tenants require separate deployments. |
+| **Operational Risks** | Configuration drift has a deployment-wide blast radius and is difficult for users to diagnose or self-correct. |
+| **Mitigations** | Startup validation, environment monitoring, deployment isolation, and membership checks. |
+| **Contextual Fit** | Acceptable for a truly single-tenant installation, not this shared multi-organization application. |
 
-| Aspect | Assessment |
-|--------|------------|
-| **Product Impact vs Cost** | **Best.** Clean login (2 fields); users always sign in as *their own* org — wrong-tenant is structurally impossible. Cost is medium-high: migration + backfill (tiny user base, dev/test only) + model change + org listing + signup endpoint + UI + test rewrite |
-| **Long-term Maintainability** | **Very good.** One source of truth in the data model (`belongs_to :organization`); standard pattern; scales with tenant growth |
-| **Failure Modes** | User without org → login explicitly rejected (no misrouting). Orgs are assigned at signup/creation — the only manual process is the initial admin |
-| **Contextual Fit** | Touches the root (data model), not the symptom (login input). Small user base → backfill is cheap. Defensible: *"tenant is determined by a data relation, not by user input"* |
+### Option D — User↔organization relation (`users.tenant_id`) + login tenant-implicit + signup dropdown ✅ **CHOSEN & IMPLEMENTED**
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Signup/administration assigns `users.tenant_id`; login derives tenant context from the authenticated user and requires no tenant input. |
+| **Product Impact** | Login remains a familiar two-field flow and wrong-tenant selection becomes structurally impossible. |
+| **Cost & Complexity** | Medium–high: migration/backfill, model relation, organization listing, signup changes, UI updates, and test rewrites. |
+| **Long-Term Maintainability** | A standard `belongs_to :organization` relation provides one scalable source of truth. |
+| **Failure Modes** | Users without an organization are rejected; incorrect provisioning can assign the wrong organization; public organization metadata needs minimization. |
+| **Operational Risks** | Migration/backfill errors can block login, and organization reassignment becomes a sensitive administrative operation. |
+| **Mitigations** | Validate/backfill all users, fail closed on missing relations, minimize listing fields, and audit controlled reassignment. |
+| **Contextual Fit** | Fixes the data-model root cause, and the small development/test user base makes the one-time backfill proportionate. |
 
 Trade-offs accepted: breaking change for phase-1 header-based logins (intentional — the phase-1 behavior itself is revoked); signup exposes a public org listing (id/name/scheme only — nothing sensitive).
 

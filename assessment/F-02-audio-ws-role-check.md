@@ -25,22 +25,40 @@ This is **injection**, not eavesdropping (other candidates do not "listen"; the 
 
 > **Related finding — F-12 (scope-out):** the *coverage* WebSocket channel (`coverage_websocket_middleware.rb:118-137`) suffers the **same root cause** — `authenticate_assessor_by_token` decodes JWT and checks tenant but **does not check role** (identical bug). Because the audio channel concerns voice data and transcript corruption, F-02 was fixed; F-12 (live status only leaks progress, not audio) is scoped out and fully listed in `assessment/README.md`. The shared-concern solution in F-02 still touches the coverage middleware, but F-12 is not formally claimed/fully verified within this scope.
 
-## 3. Options & Trade-off
+## 3. Options & Trade-offs
 
-### Option A — Shared Authz concern (REST + WS) ✅ **CHOSEN**
+| Option | Authority | Enforcement point | Relative cost | Contextual fit |
+|---|---|---|---|---|
+| **A — Shared REST/WS authorization** ✅ **CHOSEN & IMPLEMENTED** | Existing authorization source of truth | Shared WebSocket concern | Medium | Closes F-02 and prevents drift across channels |
+| **B — Inline audio role check** ❌ Not selected | Audio middleware logic | One WebSocket channel | Low | Quick patch that leaves authorization fragmented |
+
+### Option A — Shared Authz concern (REST + WS) ✅ **CHOSEN & IMPLEMENTED**
 
 `WebSocketAuth` concern that *reuses* `AuthorizeApiRequest` (REST source of truth) for the role check; used by audio + coverage WS.
 
 | Dimension | Assessment |
-|---------|-----------|
-| **Product Impact vs Cost** | Impersonation & transcript contamination fully closed; inter-candidate isolation (session ownership) enforced. Cost moderate — reuses existing `AuthorizeApiRequest`, no new role logic. |
-| **Long-term Maintainability** | Best — one authz source of truth; new WS channels `include WebSocketAuth` are automatically safe (CS-2 resolved). |
-| **Failure Modes** | Closed via per-channel tests (role `user` must REJECT); if the concern is skipped, tests fail. |
-| **Contextual Fit** | `check_role!` already exists in `AuthorizeApiRequest`; both WS middlewares already have an auth structure that just needs redirecting to the concern. |
+|---|---|
+| **End-to-End Behavior** | The WebSocket concern reuses REST token and role validation, then both audio and coverage channels authorize the assessor and session relationship before accepting messages. |
+| **Product Impact** | Blocks impersonation, transcript contamination, and cross-candidate access without changing legitimate interview behavior. |
+| **Cost & Complexity** | Medium: refactor two middlewares around an existing authorization service and add channel-specific tests. |
+| **Long-Term Maintainability** | One source of truth prevents REST/WS role drift, and new channels can adopt the same concern. |
+| **Failure Modes** | A channel can omit the concern, token/session checks can be ordered incorrectly, or future REST authorization changes can break socket behavior. |
+| **Operational Risks** | A defect in the shared concern affects multiple real-time channels and can reject all legitimate monitoring traffic. |
+| **Mitigations** | Use deny-by-default concern APIs, per-channel role/ownership tests, shared contract tests, and explicit close codes/logging. |
+| **Contextual Fit** | `check_role!` already exists and both WebSocket middlewares already have authentication structure, making reuse the lowest-drift design. |
 
 ### Option B — Inline role check in the audio middleware ❌ Rejected
 
-Just add `payload['role'] == 'assessor'` in `authenticate_and_load`. Fast, but F-12 still leaks and authz remains fragmented — does not solve the root cause (CS-2).
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The audio middleware alone would compare the token role and reject non-assessors; coverage and future WebSocket channels would keep independent logic. |
+| **Product Impact** | Closes the reported audio path but leaves equivalent real-time paths exposed to inconsistent authorization. |
+| **Cost & Complexity** | Low: a local conditional and focused tests. |
+| **Long-Term Maintainability** | Poor because role rules are duplicated and must be updated separately from REST and other channels. |
+| **Failure Modes** | Coverage remains vulnerable, ownership checks can diverge, and copied checks can interpret roles differently. |
+| **Operational Risks** | Security posture varies by channel and future refactors can silently reopen one path. |
+| **Mitigations** | Add tests to every channel and centralize constants, though these controls still preserve duplicated authorization logic. |
+| **Contextual Fit** | Useful as an emergency containment patch, but it does not resolve the repository's cross-channel authorization root cause. |
 
 ### Trade-offs accepted
 

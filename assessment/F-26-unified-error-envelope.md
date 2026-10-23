@@ -34,28 +34,56 @@ Gap to ideal condition:
 
 ## 3. Options & Trade-offs
 
-### Option A — Standardize backend envelope + full frontend error system ✅ **CHOSEN**
+All three alternatives cover backend failure production and frontend presentation. They differ in whether failures are represented as request responses, persisted workflow state, or durable asynchronous operations.
 
-Unify all backend errors on `{ error: { code, message, details? } }`, build a frontend normalizer + toast system + reusable Alert, and replace every silent catch with real feedback.
+| Option | Failure authority | Recovery unit | Relative delivery cost | Fit for this finding |
+|---|---|---|---|---|
+| **A — Unified error contract + frontend handling system** ✅ **CHOSEN & IMPLEMENTED** | Canonical API envelope, normalized at the frontend boundary | Individual request or live-session failure | Medium–high | Removes the verified inconsistency and silent catches within current Rails/React boundaries |
+| **B — Server-authored persisted workflow state** | Server/database status and transition history | Domain workflow record | High | Adds durable auditability but requires state modeling across otherwise simple request/response flows |
+| **C — Addressable asynchronous operations + reconciliation** | Durable operation status exposed by ID | Operation resource | Very high | Useful for long-running work, but excessive for most affected CRUD and load failures |
 
-| Aspect | Assessment |
-|--------|------------|
-| **Product Impact vs Cost** | All assessor operations get clear feedback; silent failures eliminated at the root — high value, high cost (backend envelope, interceptor, new UI primitives, multiple pages) |
-| **Long-term Maintainability** | Excellent — one error contract, one extraction helper, reusable Alert/Toast; new pages inherit the pattern for free |
-| **Failure Modes** | Envelope migration is backward-compatible (old shapes still parsed); contract tests guard regressions; the seeded fault test proves the guard actually fails when the envelope is reverted |
-| **Contextual Fit** | Demonstrates fullstack + frontend depth in one finding; executed in staged layers and guarded by a 6-case contract spec |
+### Option A — Unified error contract + frontend handling system ✅ **CHOSEN & IMPLEMENTED**
 
-### Option B — Frontend-only normalization (leave backend as-is) ❌ Rejected
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Every backend error producer returns `{ error: { code, message, details? } }`. The frontend normalizes canonical and legacy responses at one boundary, then renders inline Alerts or global toasts and offers retry where it is safe and useful. |
+| **Product Impact** | Assessors receive visible, actionable feedback instead of empty pages, dead actions, or dialogs that look successful. Candidates are less likely to wait for invitations that were never created. |
+| **Cost & Complexity** | Medium–high. The solution changes all backend renderers, adds a normalization/interceptor layer and reusable feedback primitives, and updates affected pages, but it uses the existing synchronous request architecture. |
+| **Long-Term Maintainability** | One envelope and extraction helper establish an explicit cross-stack contract. Shared Alert/Toast components reduce page-specific handling, while legacy parsing can be removed after rollout confidence is established. |
+| **Failure Modes** | Duplicate retries can repeat non-idempotent actions; stale page state can survive a failed request; frontend/backend contract drift can hide useful details; and partial rollout can expose incompatible envelope shapes. |
+| **Operational Risks** | A malformed shared renderer or interceptor has a broad blast radius. Global 401/403/429 handling can produce redirect or toast storms, and compatibility parsing can mask lagging producers if retained indefinitely. |
+| **Mitigations** | Guard non-idempotent retries, keep dialogs pending until confirmed success, clear stale state on failure, use backward-compatible normalization during rollout, enforce contract tests for every producer, seed malformed-envelope faults, deduplicate global notifications, and monitor error codes by origin. |
+| **Contextual Fit** | This is the strongest fit for the current Rails API and React client because the verified defects occur at existing request boundaries. It removes the root inconsistency and silent UI behavior without adding persistence or asynchronous infrastructure unrelated to most affected operations. |
 
-Normalize the two existing shapes in the interceptor and surface toasts. Faster and cheaper, but leaves two (or more) backend shapes as a permanent tax on every frontend engineer — a third format would silently break the interceptor again, and the root cause that created the bug class stays untouched.
+### Option B — Server-authored persisted workflow state ❌ Not selected
 
-### Trade-offs accepted (for the chosen option)
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The backend would persist authoritative success, failure, and recovery states for affected workflows, validate transitions, publish monotonic versions/freshness, and accept idempotent retry commands. The frontend would show immediate local pending feedback, fetch or subscribe to server state, and ignore older versions after reconnect or navigation. |
+| **Product Impact** | Users could revisit a workflow and see its authoritative result, while support gains durable failure history. Simple validation and load errors would become easier to audit but potentially slower to display until the first state write succeeds. |
+| **Cost & Complexity** | High. It requires workflow schemas, migrations, transition services, optimistic concurrency, idempotency keys, status endpoints, frontend reconciliation, and tests for each domain workflow. |
+| **Long-Term Maintainability** | Centralized state transitions are valuable for complex business processes, but applying them across invites, portfolio exports, authentication, and page loads creates more models and coordinated changes than a shared error contract. |
+| **Failure Modes** | Persisted status can be stale or delayed; competing requests can create invalid transitions; duplicate recovery commands can replay effects; and database failure can prevent both the operation and its error state from being recorded. |
+| **Operational Risks** | Write amplification and hot-row contention increase database dependence; migrations and backfills complicate rollout; retention of detailed failures needs governance; and immediate feedback can regress if UI rendering waits on persistence. |
+| **Mitigations** | Use transactions or optimistic locking, monotonic versions, idempotency keys, freshness indicators, minimal/redacted audit payloads, immediate local pending feedback, retryable outbox delivery where needed, and concurrency/replay tests. |
+| **Contextual Fit** | Suitable when durable workflow history is a product requirement. It is not proportionate for this finding because most failures are synchronous request errors that need a consistent contract and visible UI, not a new persisted lifecycle. |
 
-| Trade-off | Justification |
-|-----------|---------------|
-| Larger surface area (backend + frontend + many pages) | Mitigated by staged commits (13 small, readable) and a 6-case contract spec; each layer lands and is verified independently |
-| Backend envelope change could break old clients | Migration is backward-compatible — the frontend still parses legacy shapes first; contract tests lock the new shape |
-| NEW-F-01 picked up inside this finding | Same page, same pattern, same root cause (silent failure) — fixing them together is more efficient than a separate PR |
+### Option C — Addressable asynchronous operations + reconciliation ❌ Not selected
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The backend would represent work such as invite creation or export as idempotent operation resources with durable status, polling/event delivery, retention, cancellation, and retry semantics. The frontend would retain operation IDs, resume observation after navigation, deduplicate notifications, and reconcile monotonic operation versions. |
+| **Product Impact** | Long-running actions could survive disconnects and expose progress instead of failing silently. For ordinary page loads or validation errors, an operation lifecycle would add latency and interaction steps without a corresponding user benefit. |
+| **Cost & Complexity** | Very high. It introduces operation endpoints and storage, workers or event infrastructure, frontend polling/subscriptions, cleanup policies, tracing, and reconciliation testing. |
+| **Long-Term Maintainability** | A standard operation model can unify genuinely asynchronous work, but creates a second error and lifecycle protocol alongside normal HTTP responses. Expiry, cancellation, and abandoned-operation behavior require ongoing ownership. |
+| **Failure Modes** | Events can be lost, duplicated, delayed, or reordered; polling can create load and stale feedback; operations can expire before clients reconcile; and retries can create duplicate operation resources or conflicting terminal states. |
+| **Operational Risks** | Queues and event delivery add capacity and incident modes, retention cleanup can erase troubleshooting context, abandoned operations can accumulate, and end-to-end tracing becomes substantially more complex. |
+| **Mitigations** | Preserve a durable status endpoint, use sequence/version checks and deduplication, require idempotency keys, apply bounded backoff with jitter, retain tombstones, propagate correlation IDs, monitor queue lag/poll volume/abandonment, and run reconciliation tests with missing or reordered events. |
+| **Contextual Fit** | Appropriate for exports or future long-running workflows at greater scale, but not as the default error model for the current mix of CRUD, authentication, and load requests. Its infrastructure cost exceeds the verified need. |
+
+### Trade-offs accepted for Option A
+
+Option A changes a broad cross-stack surface and requires a compatibility window for older clients. That cost is accepted because the defect itself spans every error producer and multiple frontend consumers. Staged implementation, backward-compatible parsing, a six-case contract spec, seeded-fault testing, and shared UI primitives constrain the rollout risk while addressing the root cause inside the architecture already in use. NEW-F-01 remains included because the prematurely closing invite dialog is the same silent-failure pattern on an already affected page.
 
 ## 4. Solution Implemented
 

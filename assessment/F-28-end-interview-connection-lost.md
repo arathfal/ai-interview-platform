@@ -23,20 +23,38 @@ Found during end-to-end testing as a candidate (2026-08-18).
 
 **Gap to ideal:** closing the socket because the user *intentionally ended* the interview must be treated as a clean close — no reconnect, no fatal error. The `complete` state must survive.
 
-## 3. Opsi & Trade-off
+## 3. Options & Trade-offs
 
-### Opsi A — Mark the close as intentional inside `disconnect()` ✅ **CHOSEN**
+| Option | Authority | Coordination | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Intentional-close flag** ✅ **CHOSEN & IMPLEMENTED** | Client intent | None | Low | Prevents false failure |
+| **B — Wait for server reply** ❌ Not selected | Server event | Reply + timeout | Medium | Adds delay and loss risk |
 
-| Aspect | Assessment |
-|---------|-----------|
-| **Product Impact vs Cost** | One-line semantic fix in the hook; candidate sees the true "Interview Complete" state |
-| **Long-term Maintainability** | `disconnect()` is the only intentional-close entry point today; encoding intent there is the simplest invariant ("disconnect = I meant to stop") |
-| **Failure Modes** | If a future caller uses `disconnect()` mid-session for another reason, the session is considered ended client-side — acceptable: `disconnect()` is only called by `endInterview` |
-| **Contextual Fit** | Stays inside the hook's state machine; no page-level restructuring, no backend change |
+### Option A — Mark the close as intentional inside `disconnect()` ✅ **CHOSEN & IMPLEMENTED**
 
-### Opsi B — Wait for the backend `session_ended` reply before closing ❌ Rejected
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | `disconnect()` records intent before socket closure. |
+| **Product Impact** | Candidates see truthful completion. |
+| **Cost & Complexity** | Low: one flag and one test. |
+| **Long-Term Maintainability** | Intent lives at the single close entry point. |
+| **Failure Modes** | Future non-terminal callers could suppress real errors. |
+| **Operational Risks** | Refactors can break the close invariant. |
+| **Mitigations** | Connection-scoped state, documentation, and close-path tests. |
+| **Contextual Fit** | Fits the existing hook without backend changes. |
 
-Would require a deferred close (close on receipt of `session_ended`, with a timeout fallback). Adds latency, an extra timer, and a failure mode if the reply is lost — for no user-visible benefit. The backend already ends the session on `end_session` regardless of the socket close.
+### Option B — Wait for the backend `session_ended` reply before closing ❌ Rejected
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The client waits for acknowledgement or timeout before closing. |
+| **Product Impact** | Confirms receipt but delays completion. |
+| **Cost & Complexity** | Medium: deferred state, timer, and tests. |
+| **Long-Term Maintainability** | Adds a second shutdown protocol. |
+| **Failure Modes** | Lost replies, duplicate events, and slow servers stall UI. |
+| **Operational Risks** | Network latency affects the completion experience. |
+| **Mitigations** | Idempotency, bounded timeout, and monotonic states. |
+| **Contextual Fit** | Excessive because backend termination is already independent. |
 
 ### Trade-offs accepted (for the chosen option)
 

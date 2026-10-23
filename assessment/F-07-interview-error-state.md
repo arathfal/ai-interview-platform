@@ -27,29 +27,58 @@ This is a **defective implementation**, not a **missing specification** — the 
 
 > **Related finding — F-25 (scope-out):** F-25 addresses a broader API/frontend type contract. F-07 fixes the interview state machine & type for the interview flow only (Frontend Depth focus); F-25 remains scope-out in the findings list.
 
-## 3. Options & Trade-off
+## 3. Options & Trade-offs
 
-### Option A — Full state machine + error UI component + retry flow ✅ **CHOSEN**
+All three alternatives cover the complete failure path from backend signal to candidate-visible recovery. They differ in where workflow authority and recovery coordination live.
 
-Add an `"error"` state to `InterviewState`, an `InterviewErrorInfo` type (kind + code + message + recoverable), an `<InterviewError>` component (per-kind copy, `role="alert"`, retry button only for recoverable errors, reload always available), and expose `onFatalError` from the WS hook for non-recoverable WS errors and exhausted reconnects.
+| Option | Workflow authority | Recovery unit | Relative delivery cost | Fit for this finding |
+|---|---|---|---|---|
+| **A — Client state machine + explicit backend failure contract** ✅ **CHOSEN & IMPLEMENTED** | Client owns presentation state; backend supplies typed HTTP/WebSocket failures | Current interview session and one active connection | Medium | Directly fixes the observed false-success paths with the existing architecture |
+| **B — Server-authored persisted workflow state** | Server/database own authoritative interview status and transition version | Persisted interview session | High | Strong auditability, but adds persistence and concurrency machinery beyond the observed defect |
+| **C — Addressable asynchronous operations + reconciliation** | Durable operation resources coordinate work independently of the page lifecycle | Operation ID | Very high | Strongest long-running recovery model, but disproportionate for the current synchronous/WebSocket flow |
 
-| Aspect | Assessment |
-|---------|-----------|
-| **Product Impact vs Cost** | Candidates see the real status; recoverable errors can be retried → **data loss is drastically reduced**. Cost is medium-high (the deepest change on the frontend side). |
-| **Long-term Maintainability** | Good — a discriminated union + clear state pattern makes the interview logic easy to evolve; this also overlaps positively with the type contract (F-25). |
-| **Failure Modes** | Retry must be idempotent (no duplicate WebSocket connections) — guaranteed because retry re-runs the fetch effect / fully restarts from idle; per-kind messages avoid one confusing generic copy. |
-| **Contextual Fit** | Best fit for the **Frontend Depth** position — state machine, edge-case handling, error UI, and accessibility. |
+### Option A — Client state machine + explicit backend failure contract ✅ **CHOSEN & IMPLEMENTED**
 
-### Option B — Add a minimal `error` state + static message (without retry) ❌ Rejected
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The backend continues to return explicit HTTP failures and WebSocket error/reconnect signals. The frontend maps those signals into an exhaustive `InterviewState`, renders cause-specific accessible messaging, stops active media on fatal failure, and offers controlled retry only when recovery is valid. |
+| **Product Impact** | Candidates no longer receive a false completion claim and can recover from eligible load or connection failures. Hiring stakeholders avoid treating an unrecorded session as completed. |
+| **Cost & Complexity** | Medium. The change adds a typed state, error model, component, hook callback, retry paths, and focused tests without adding storage, queues, or a new workflow service. |
+| **Long-Term Maintainability** | The discriminated state model makes terminal outcomes explicit, and backend failure codes can be mapped centrally as new cases appear. Its boundary remains understandable within the current React/Rails/WebSocket structure. |
+| **Failure Modes** | Retry can trigger duplicate fetches or WebSocket connections; delayed callbacks can overwrite newer client state; frontend/backend contract drift can misclassify a failure; and a partial rollout can expose incompatible error or event shapes. |
+| **Operational Risks** | Correctness depends on browser lifecycle behavior and coordinated frontend/backend deployment. Client-only state is not a durable audit record, and regressions may appear only under timing-sensitive reconnect conditions. |
+| **Mitigations** | Use idempotent retry guards, exhaustive typed transitions, cleanup that enforces one active socket and cancels stale timers, backward-compatible parsing during rollout, contract tests, and seeded-fault/reconnect tests. |
+| **Contextual Fit** | This is the best fit for the current product and assessment scope because it directly repairs the verified false-success behavior using existing boundaries. It delivers truthful UI and recovery without introducing workflow infrastructure whose operational cost is not justified by the present session model. |
 
-Fast & cheap, but data loss still happens (only no longer silent). The candidate has no way forward for errors that are actually recoverable (a temporarily dropped connection). Doesn't surface enough depth for the brief's frontend expectations.
+### Option B — Server-authored persisted workflow state ❌ Not selected
 
-### Trade-offs accepted (Option A / for the chosen option)
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The backend would persist authoritative interview states, validate allowed transitions, attach monotonic versions and freshness timestamps, and accept idempotent recovery commands. The frontend would show immediate local waiting feedback, then render the latest server state after fetch or reconnect and ignore regressive versions. |
+| **Product Impact** | Candidates could resume consistently across refreshes or devices, while support and hiring teams would gain a durable transition history. The first visible response could be slower while the initial state write completes. |
+| **Cost & Complexity** | High. It requires schema and migration work, transition services, concurrency control, idempotency keys, recovery endpoints, frontend version reconciliation, and broader integration tests. |
+| **Long-Term Maintainability** | Centralized transition rules and an audit trail help complex workflows, but every new state becomes a coordinated database/API/frontend change. Retention and migration compatibility become permanent concerns. |
+| **Failure Modes** | Persisted status can be stale or delayed; concurrent workers can attempt competing or invalid transitions; duplicate recovery commands can replay work; and a slow first write can leave the UI apparently unresponsive. |
+| **Operational Risks** | State writes amplify database load, hot session rows can contend, migrations carry rollout risk, and availability becomes more tightly coupled to the primary database. |
+| **Mitigations** | Use transactions or optimistic locking, monotonic versions, idempotency keys, freshness indicators, immutable audit logs, immediate local pending feedback, and concurrency/replay tests. |
+| **Contextual Fit** | Credible when cross-device resume, durable auditability, or server-controlled multi-step workflows are core requirements. Those benefits do not justify the added persistence and rollout burden for this narrowly verified client-state defect. |
 
-| Trade-off | Justification |
-|-----------|------------------------------|
-| Larger change (state machine + component + hook + tests) | The only option that saves candidate data (retry) — greatest impact on the non-user |
-| All failure paths mapped per kind | Cost of honest, specific messages; the union type locks the mapping |
+### Option C — Addressable asynchronous operations + reconciliation ❌ Not selected
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The backend would create idempotent interview-operation resources for start, recovery, or finalization; persist durable status; and expose polling plus event delivery, retention, cancellation, and retry semantics. The frontend would retain operation IDs, resume polling/events after reconnect, deduplicate updates, and reconcile only monotonic operation states. |
+| **Product Impact** | Candidates could recover from tab closure or prolonged disconnects without losing visibility into in-flight work, and support could trace each recovery attempt. Polling or event propagation may make feedback less immediate. |
+| **Cost & Complexity** | Very high. It adds operation schemas/endpoints, background execution or event infrastructure, client reconciliation, retention cleanup, observability, and end-to-end failure testing. |
+| **Long-Term Maintainability** | Durable operations scale well for genuinely asynchronous workflows, but introduce a second lifecycle alongside the interview session and require explicit policies for expiry, cancellation, and abandoned work. |
+| **Failure Modes** | Events can be lost, duplicated, delayed, or arrive out of order; polling can lag or overload the API; operations can expire before reconciliation; and repeated retries can create duplicate operations or conflicting client/server views. |
+| **Operational Risks** | Queue or event infrastructure adds capacity planning and incident modes; retention cleanup can remove needed evidence; abandoned operations can accumulate; and tracing across browser, API, worker, and event delivery becomes harder. |
+| **Mitigations** | Keep a durable status endpoint as the source of truth, enforce sequence/version checks and deduplication, require idempotency keys, use bounded backoff with jitter, retain tombstones, propagate correlation IDs, monitor lag/abandonment metrics, and test reconciliation under reordered or missing events. |
+| **Contextual Fit** | Appropriate if interview processing becomes long-running and independently resumable. For the current live WebSocket session, it creates substantial infrastructure and operational surface without improving the verified defect enough to offset that cost. |
+
+### Trade-offs accepted for Option A
+
+Option A accepts that recovery state is not durable across devices and that coordinated contract rollout is required. In return, it provides the needed candidate protection through a bounded change that matches the existing architecture and delivery window. The retry and contract risks are controlled through typed transitions, single-connection cleanup, compatibility handling, contract tests, and seeded-fault coverage.
 
 ## 4. Solution Implemented
 
