@@ -63,14 +63,14 @@ RSpec.describe 'Unified error envelope (F-26)', type: :request do
     end
   end
 
-  describe '422 validation_failed' do
-    it 'signup without an organization is rejected with validation_failed' do
+  describe '422 invalid_invitation' do
+    it 'signup without an administrator invitation uses the unified envelope' do
       post '/api/v1/auth/signup',
            params: { email: 'envelope@test.corp', password: 'Password123!' }.to_json,
            headers: { 'Content-Type' => 'application/json' }
 
       expect(response).to have_http_status(:unprocessable_entity)
-      expect(json_body.dig('error', 'code')).to eq('validation_failed')
+      expect(json_body.dig('error', 'code')).to eq('invalid_invitation')
     end
   end
 

@@ -4,7 +4,7 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import SignUpPage from "@/pages/auth/SignupPage";
 import { authApi } from "@/services/auth";
-import { organizationsApi } from "@/services/organizations";
+import { adminInvitationsApi } from "@/services/adminInvitations";
 
 const navigateMock = vi.fn();
 
@@ -14,42 +14,38 @@ vi.mock("react-router-dom", async (importOriginal) => {
 });
 
 vi.mock("@/services/auth", () => ({
-  authApi: {
-    login: vi.fn(),
-    signup: vi.fn(),
-  },
+  authApi: { login: vi.fn(), signup: vi.fn() },
 }));
 
-vi.mock("@/services/organizations", () => ({
-  organizationsApi: {
-    list: vi.fn(),
+vi.mock("@/services/adminInvitations", () => ({
+  adminInvitationsApi: {
+    validate: vi.fn(),
   },
 }));
 
 const signupMock = authApi.signup as ReturnType<typeof vi.fn>;
-const listMock = organizationsApi.list as ReturnType<typeof vi.fn>;
+const validateMock = adminInvitationsApi.validate as ReturnType<typeof vi.fn>;
 
-const ORGS = [
-  { id: 1, name: "Tenant A", scheme: "tenant-a" },
-  { id: 2, name: "Tenant B", scheme: "tenant-b" },
-];
+const VALID_INVITATION = {
+  recipient_email: "invited@example.com",
+  expires_at: "2026-10-25T00:00:00Z",
+  organization: { name: "Tenant A" },
+};
 
 beforeEach(() => {
+  localStorage.clear();
   navigateMock.mockReset();
   signupMock.mockReset();
-  listMock.mockReset();
-  // Radix Select needs pointer/scroll polyfills that jsdom lacks.
-  window.HTMLElement.prototype.hasPointerCapture = () => false;
-  window.HTMLElement.prototype.scrollIntoView = () => {};
+  validateMock.mockReset();
 });
 
 afterEach(() => {
   vi.clearAllMocks();
 });
 
-function renderSignup() {
+function renderSignup(entry = "/signup?invitation=valid-token") {
   return render(
-    <MemoryRouter initialEntries={["/signup"]}>
+    <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/signup" element={<SignUpPage />} />
       </Routes>
@@ -57,173 +53,105 @@ function renderSignup() {
   );
 }
 
-async function selectOrg(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.click(screen.getByRole("combobox", { name: /organization/i }));
-  await user.click(await screen.findByRole("option", { name }));
+async function renderValidSignup() {
+  validateMock.mockResolvedValue({ data: { invitation: VALID_INVITATION } });
+  renderSignup();
+  await screen.findByDisplayValue("Tenant A");
 }
 
-describe("SignUpPage — organization dropdown signup (F-03 phase 2)", () => {
-  it("toggles password visibility with the eye icon (shared PasswordInput)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
+describe("SignUpPage — invitation-gated administrator signup", () => {
+  it("blocks public signup without an invitation and never loads the organization list", () => {
+    renderSignup("/signup");
 
-    const passwordInput = screen.getByLabelText(/^password$/i);
-    expect(passwordInput).toHaveAttribute("type", "password");
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: /show password/i }));
-    expect(passwordInput).toHaveAttribute("type", "text");
-
-    await user.click(screen.getByRole("button", { name: /hide password/i }));
-    expect(passwordInput).toHaveAttribute("type", "password");
+    expect(screen.getByText(/administrator invitation is required/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sign up/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("combobox", { name: /organization/i })).not.toBeInTheDocument();
+    expect(validateMock).not.toHaveBeenCalled();
   });
 
-  it("renders the organization dropdown populated from GET /organizations", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
+  it("validates the URL token and renders invitation tenant disabled with bound email read-only", async () => {
+    await renderValidSignup();
 
-    await waitFor(() => expect(listMock).toHaveBeenCalledTimes(1));
-
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("combobox", { name: /organization/i }));
-    expect(await screen.findByRole("option", { name: "Tenant A" })).toBeInTheDocument();
-    expect(screen.getByRole("option", { name: "Tenant B" })).toBeInTheDocument();
+    expect(validateMock).toHaveBeenCalledWith("valid-token");
+    const organization = screen.getByLabelText(/organization/i);
+    expect(organization).toBeDisabled();
+    expect(organization).toHaveValue("Tenant A");
+    expect(screen.getByLabelText(/email/i)).toHaveValue("invited@example.com");
+    expect(screen.getByLabelText(/email/i)).toHaveAttribute("readonly");
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
   });
 
-  it("blocks submit until an organization is selected (inline error, no request)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
-
-    const user = userEvent.setup();
-    await user.type(screen.getByLabelText(/email/i), "new@test.corp");
-    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
-    await user.click(screen.getByRole("button", { name: /sign up/i }));
-
-    expect(await screen.findByText("Please select an organization.")).toBeInTheDocument();
-    expect(signupMock).not.toHaveBeenCalled();
-  });
-
-  it("submits with the chosen organization_id and navigates on success", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
+  it("submits token, bound email, and password only, then navigates on success", async () => {
     signupMock.mockResolvedValue({ data: { token: "tok123" } });
-    renderSignup();
+    await renderValidSignup();
 
     const user = userEvent.setup();
-    await selectOrg(user, "Tenant B");
-    await user.type(screen.getByLabelText(/email/i), "new@test.corp");
     await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign up/i }));
 
     await waitFor(() => {
       expect(signupMock).toHaveBeenCalledWith({
-        email: "new@test.corp",
+        invitation_token: "valid-token",
+        email: "invited@example.com",
         password: "Password123!",
-        organization_id: 2,
       });
     });
-    await waitFor(() => expect(navigateMock).toHaveBeenCalledWith("/assessments"));
+    const payload = signupMock.mock.calls[0][0];
+    expect(payload).not.toHaveProperty("organization_id");
+    expect(payload).not.toHaveProperty("role");
     expect(localStorage.getItem("auth_token")).toBe("tok123");
+    expect(navigateMock).toHaveBeenCalledWith("/assessments");
   });
 
-  it("surfaces the backend error (e.g. duplicate email) instead of a generic one", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    signupMock.mockRejectedValue({
-      response: { data: { errors: [{ message: "Email has already been taken" }] } },
+  it("renders a generic unavailable state for invalid, expired, revoked, or used tokens", async () => {
+    validateMock.mockRejectedValue({
+      response: { status: 422, data: { error: { code: "invalid_invitation", message: "Invitation is invalid" } } },
     });
     renderSignup();
 
+    expect(await screen.findByText(/this invitation is unavailable/i)).toBeInTheDocument();
+    expect(screen.getByText(/invalid, expired, revoked, or already used/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /sign up/i })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes network failure and retries validation", async () => {
+    validateMock
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockResolvedValueOnce({ data: { invitation: VALID_INVITATION } });
+    renderSignup();
+
+    expect(await screen.findByText(/unable to validate the invitation/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /try again/i }));
+
+    expect(await screen.findByDisplayValue("Tenant A")).toBeInTheDocument();
+    expect(validateMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("toggles password visibility and mirrors the backend password policy", async () => {
+    await renderValidSignup();
+    const password = screen.getByLabelText(/^password$/i);
     const user = userEvent.setup();
-    await selectOrg(user, "Tenant A");
-    await user.type(screen.getByLabelText(/email/i), "taken@test.corp");
+
+    await user.click(screen.getByRole("button", { name: /show password/i }));
+    expect(password).toHaveAttribute("type", "text");
+    await user.type(password, "short");
+    await user.click(screen.getByRole("button", { name: /sign up/i }));
+
+    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
+    expect(signupMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a duplicate-email error without reporting success", async () => {
+    signupMock.mockRejectedValue({
+      response: { status: 422, data: { error: { code: "validation_failed", message: "Email has already been taken" } } },
+    });
+    await renderValidSignup();
+
+    const user = userEvent.setup();
     await user.type(screen.getByLabelText(/^password$/i), "Password123!");
     await user.click(screen.getByRole("button", { name: /sign up/i }));
 
     expect(await screen.findByText("Email has already been taken")).toBeInTheDocument();
-  });
-
-  it("shows a message and disables submit when no organizations exist", async () => {
-    listMock.mockResolvedValue({ data: { organizations: [] } });
-    renderSignup();
-
-    expect(
-      await screen.findByText(/no organizations available\. please contact your assessor/i)
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /sign up/i })).toBeDisabled();
-  });
-
-  it("shows an error when the organization listing fails to load", async () => {
-    listMock.mockRejectedValue(new Error("network down"));
-    renderSignup();
-
-    expect(
-      await screen.findByText("Failed to load organizations. Please try again.")
-    ).toBeInTheDocument();
-  });
-
-  it("rejects an invalid email with an inline error (F-26)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
-
-    const user = userEvent.setup();
-    await selectOrg(user, "Tenant A");
-    await user.type(screen.getByLabelText(/email/i), "not-an-email");
-    await user.type(screen.getByLabelText(/^password$/i), "Password123!");
-    await user.click(screen.getByRole("button", { name: /sign up/i }));
-
-    expect(await screen.findByText("Enter a valid email address.")).toBeInTheDocument();
-    expect(signupMock).not.toHaveBeenCalled();
-  });
-
-  it("requires both email and password with inline messages (F-26)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
-
-    const user = userEvent.setup();
-    await selectOrg(user, "Tenant A");
-    await user.click(screen.getByRole("button", { name: /sign up/i }));
-
-    expect(await screen.findByText("Email is required.")).toBeInTheDocument();
-    expect(screen.getByText("Password is required.")).toBeInTheDocument();
-    expect(signupMock).not.toHaveBeenCalled();
-  });
-
-  it("blocks submit and shows the policy error for a password shorter than 8 chars (backend mirror)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
-
-    const user = userEvent.setup();
-    await selectOrg(user, "Tenant A");
-    await user.type(screen.getByLabelText(/email/i), "new@test.corp");
-    await user.type(screen.getByLabelText(/^password$/i), "short");
-    await user.click(screen.getByRole("button", { name: /sign up/i }));
-
-    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
-    expect(signupMock).not.toHaveBeenCalled();
-  });
-
-  it("blocks submit and shows the policy error for a password longer than 72 chars (backend mirror)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
-
-    const user = userEvent.setup();
-    await selectOrg(user, "Tenant A");
-    await user.type(screen.getByLabelText(/email/i), "new@test.corp");
-    await user.type(screen.getByLabelText(/^password$/i), "a".repeat(73));
-    await user.click(screen.getByRole("button", { name: /sign up/i }));
-
-    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
-    expect(signupMock).not.toHaveBeenCalled();
-  });
-
-  it("validates the policy live on blur before submit (onTouched)", async () => {
-    listMock.mockResolvedValue({ data: { organizations: ORGS } });
-    renderSignup();
-
-    const user = userEvent.setup();
-    await selectOrg(user, "Tenant A");
-    await user.type(screen.getByLabelText(/^password$/i), "abc");
-    await user.tab(); // blur → onTouched validation fires
-
-    expect(await screen.findByText("Password must be between 8 and 72 characters.")).toBeInTheDocument();
+    expect(navigateMock).not.toHaveBeenCalled();
   });
 });
