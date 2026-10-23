@@ -9,6 +9,10 @@ class User < ApplicationRecord
   # organization. Login derives the tenant scheme from this association, so
   # tenancy is verified by data, not by anything typed at the login form.
   belongs_to :organization, foreign_key: :tenant_id
+  has_many :administrator_invitations,
+           foreign_key: :inviter_id,
+           inverse_of: :inviter,
+           dependent: :restrict_with_exception
 
   validates :email, presence: true,
                     uniqueness: { case_sensitive: false },
