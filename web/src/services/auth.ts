@@ -6,9 +6,9 @@ export interface LoginPayload {
 }
 
 export interface SignupPayload {
+  invitation_token: string;
   email: string;
   password: string;
-  organization_id: number;
 }
 
 export interface LoginResponse {
@@ -21,7 +21,7 @@ export const authApi = {
   // account's organization, so no X-Tenant-Scheme header is sent.
   login: (data: LoginPayload) => api.post<LoginResponse>("/auth/login", data),
 
-  // Signup requires the chosen organization (from the public org listing),
-  // so the new account is already assigned to a tenant from day one.
+  // Administrator signup is authorized by a server-issued invitation. Tenant
+  // and role are intentionally absent from the client contract.
   signup: (data: SignupPayload) => api.post<LoginResponse>("/auth/signup", data),
 };
