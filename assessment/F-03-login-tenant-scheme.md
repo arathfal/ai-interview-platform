@@ -1,158 +1,167 @@
-# F-03 — Login Without User↔Organization Relation → Tenant Bound to an Arbitrary Organization
+# F-03 — Authentication Tenant Binding and Invitation-Gated Administrator Signup
 
-> **Finding:** F-03 (severity: P1) · **Classification:** Defective Implementation · **Area:** Authentication / Multi-tenant routing (Fullstack) · **UU PDP:** Yes (related)
-> **Branch:** `fix/f03-login-tenant-scheme` · **Status:** ✅ Completed & verified (decision evolution A → D documented)
+> **Finding:** F-03 (severity: P1) · **Classification:** Defective Implementation · **Area:** Authentication / Multi-tenant authorization (Fullstack) · **UU PDP:** Yes (related)
+> **Branch:** `fix/admin-invitation-signup` · **Status:** ✅ Completed & verified (original fix plus reviewer security follow-up)
 
 ---
 
 ## 1. Summary
 
-Login never verified which tenant a user actually belongs to. On `POST /api/v1/auth/login`, the backend resolved the tenant via `request.headers['X-Tenant-Scheme'].presence || SELECT scheme FROM organizations LIMIT 1 || 'test-corp'` — with no header, the token was scoped to whichever organization PostgreSQL happened to return first (no `ORDER BY`, non-deterministic). The frontend login page only had email + password fields, so **every browser login silently landed in an arbitrary tenant**.
+The original F-03 defect allowed login to bind a user to an arbitrary organization because users had no persisted organization relation. That defect remains fixed: every user belongs to one organization through `users.tenant_id`, login accepts only email and password, and the JWT tenant scheme is derived from the persisted user relation.
 
-If left unfixed: with more than one organization, an assessor could unknowingly view and manage another tenant's candidates, sessions, and portfolios — silent multi-tenant misrouting of personal data (UU PDP) plus a data-integrity hazard (records created under the wrong tenant).
+A reviewer follow-up identified a second authorization gap in the onboarding path. Public `/signup` allowed an unauthenticated visitor to choose any organization and immediately receive an `admin` account and administrator JWT. Correct tenant derivation did not prove that the registrant was authorized to join that tenant.
 
-**Decision evolution (2026-08-17):** the finding was first addressed with a tenant input field on the login form (Option A) — implemented, verified, and opened as PR #8. A product review then revoked it: tenant input adds no *validity* (a user is not related to any organization, so the field is just a claim; anyone who knows a scheme could log into that tenant), and it does not match how a 1-account = 1-company app works. The final solution (Option D) makes tenancy a **data relation**: every user belongs to exactly one organization (`users.tenant_id`), login is clean (email + password) and derives the scheme from the account, and signup assigns the organization via a dropdown. The phase-1 commits are kept in the branch history so the decision evolution is auditable.
+The follow-up replaces public administrator registration with a dedicated invitation flow. An existing administrator issues an email- and tenant-bound, expiring, single-use invitation. The server stores only a SHA-256 token digest, derives tenant and the fixed `admin` role exclusively from the invitation, consumes it atomically with user creation, and issues a JWT only after the transaction commits. Candidate interview invitations remain a separate mechanism.
 
 ## 2. Analysis & Gap to Ideal
 
-Root cause (deeper than the header): there is **no ownership relation between users and organizations** in the data model. Because of that, no tenant mechanism — header, form field, or env — can ever be *verified*; any claimed tenant is accepted. The correct fix must touch the data model, not just the login path.
+The initial root cause was missing identity-to-tenant ownership. Adding `users.tenant_id` made login tenant-implicit and structurally prevented a login request from selecting another tenant. The follow-up exposed a different boundary: **membership authorization**. A persisted tenant relation is trustworthy only when a trusted process controls how that relation is created.
 
-Code-level evidence (before phase 2):
+Before the follow-up:
 
-| File | Evidence |
-|------|----------|
-| `api/app/controllers/api/v1/authentication_controller.rb` | `resolve_scheme` fell back to `SELECT scheme FROM organizations LIMIT 1` \|\| `'test-corp'` — non-deterministic tenant binding |
-| `api/db/schema.rb` (`users`) | users had only `email, password_digest, role` — no tenant column, no join table, no association |
-| `web/src/pages/auth/LoginPage.tsx` | only email + password; `authApi.login({ email, password })` — no tenant path |
-| `web/src/App.tsx` | `/signup` route missing — SignupPage dead code; `authApi.signup` hung without backend endpoint |
-| `api/config/routes.rb` | no organization listing — the frontend had no source of valid tenants |
+| Layer | Gap |
+|---|---|
+| Backend signup | Accepted public `organization_id`, created role `admin`, and returned a JWT without an authorization grant |
+| Public API | Exposed an organization listing solely to populate the signup selector |
+| Frontend signup | Let any unauthenticated visitor select an organization and auto-login as administrator |
+| Auditability | Stored no inviter, recipient binding, expiry, revocation, or acceptance evidence |
 
-Gap to ideal condition (phase 2):
-1. Every user has an explicit relation to an organization (`users.tenant_id`, NOT NULL + FK). Admin/assessors are always tenant-bound (no cross-org superadmin).
-2. Login is tenant-implicit: email + password → scheme derived from the account. A user without an org is rejected with a clear message.
-3. Signup is active with an organization dropdown fed by a public `GET /organizations` (id + name + scheme).
-4. Tenancy is structurally verifiable: the token's `scheme` always equals the account's organization — misrouting is impossible, not merely unlikely.
-5. `X-Tenant-Scheme` remains supported **only** for non-JWT/candidate flows (TenantResolverMiddleware) — unchanged.
+The ideal condition is:
+
+1. Login tenancy continues to come from the persisted user relation.
+2. Only an authenticated, persisted administrator may grant administrator membership.
+3. The grant is bound to one tenant, recipient email, inviter, expiry, and single-use state.
+4. Raw invitation tokens are never stored or logged.
+5. Signup cannot use client-supplied tenant or role as authorization input.
+6. Failed user creation, including duplicate email, does not consume the invitation.
+7. Candidate interview tokens cannot authorize administrator signup.
+
+**Related finding — F-10 (scope correction).** F-10 described the unusable legacy `user` role and missing signup path. This follow-up does not introduce general role invitations or broader RBAC. Administrator invitations have no selectable role and always assign `admin` server-side. F-10 remains outside the original finding count, while its prior narrative—public signup hardcoding `admin` as a resolution—has been corrected in the aggregate README.
 
 ## 3. Options & Trade-offs
 
-| Option | Tenant authority | User interaction | Relative cost | Outcome |
-|---|---|---|---|---|
-| **A — Login tenant input/header** ❌ Revoked | User-entered scheme | Extra login field | Medium | Implemented in phase 1, then revoked after product review |
-| **B — URL tenant routing** ❌ Not selected | URL path | Tenant-specific login URL | High | Disproportionate and still cannot prove ownership |
-| **C — Deployment-configured tenant** ❌ Not selected | Environment variable | None | Low | A wrong deployment value misroutes every login |
-| **D — User↔organization relation** ✅ **CHOSEN & IMPLEMENTED** | Persisted user relation | Tenant-implicit login | Medium–high | Structurally prevents wrong-tenant login |
-
-### Option A — Tenant input on LoginPage + mandatory header ❌ Initially chosen, then revoked
+### Option A — Existing-administrator invitation ✅ Chosen and implemented
 
 | Dimension | Assessment |
 |---|---|
-| **End-to-End Behavior** | The frontend sends a user-entered `X-Tenant-Scheme`; the backend requires it and checks only that the organization exists. |
-| **Product Impact** | Makes tenant choice visible but adds recurring login effort and still permits users to claim an unrelated organization. |
-| **Cost & Complexity** | Medium: form, header, backend validation, and tests; it was implemented in phase 1 and then revoked. |
-| **Long-Term Maintainability** | Weak because identity and tenancy remain separate inputs that every client must coordinate. |
-| **Failure Modes** | Typos reject valid users, an existing but unrelated scheme misroutes context, and non-browser clients can send arbitrary values. |
-| **Operational Risks** | Support burden rises around tenant discovery and copied links, while the UI creates false confidence in ownership validation. |
-| **Mitigations** | Add organization membership validation and tenant discovery—effectively moving toward Option D. |
-| **Contextual Fit** | Unusual for the product's one-account/one-company flow and not mandated by the brief; product review revoked it. |
+| **End-to-End Behavior** | An authenticated admin issues an email-bound token; the recipient opens the link; backend validation and redemption derive tenant and `admin` role from the invitation. |
+| **Product Impact** | Provides a direct, understandable onboarding path with explicit organization authorization and a protected management UI. |
+| **Cost & Complexity** | Medium: migration, digest/token lifecycle, transactional redemption, protected API/UI, and full-stack tests. |
+| **Long-Term Maintainability** | Strong for the current one-account/one-organization model; authorization evidence is explicit and auditable. |
+| **Failure Modes** | Token leakage, expiry during onboarding, duplicate redemption, wrong email, stale JWT, or failed user creation. |
+| **Operational Risks** | Initial installations still need a trusted bootstrap administrator; links require manual delivery until email infrastructure exists. |
+| **Mitigations** | High-entropy token, digest-only storage, 24-hour expiry, revocation, row lock, generic public errors, rate limiting, and retry-safe transaction rollback. |
+| **Contextual Fit** | Best fit for the current product because existing admins are the trusted membership authority and no verified-email infrastructure exists. |
 
-### Option B — URL-based tenant routing (`/:scheme/login`) ❌ Rejected
-
-| Dimension | Assessment |
-|---|---|
-| **End-to-End Behavior** | Tenant context comes from `/:scheme/login`; frontend routing and backend requests carry that context through authentication. |
-| **Product Impact** | Branded/deep-linked tenant entry becomes possible, but wrong links still cannot prove user membership. |
-| **Cost & Complexity** | High: router restructuring, redirects/404s, link migration, compatibility handling, and tests. |
-| **Long-Term Maintainability** | Reasonable for a tenant-branded product, but every auth link and route must preserve scheme semantics. |
-| **Failure Modes** | Stale or mistyped URLs reject users, redirects drop tenant context, and known schemes still allow cross-tenant claims without membership data. |
-| **Operational Risks** | Link distribution and backward compatibility add deployment/support burden at very small tenant scale. |
-| **Mitigations** | Canonical redirects, route validation, compatibility aliases, and membership checks. |
-| **Contextual Fit** | Disproportionate for one or two internal organizations and still does not solve ownership alone. |
-
-### Option C — Backend-only: reject without header, frontend sends from env ❌ Rejected
+### Option B — Verified-domain eligibility ❌ Not selected
 
 | Dimension | Assessment |
 |---|---|
-| **End-to-End Behavior** | The deployed frontend sends one environment-configured tenant header and the backend rejects requests without it. |
-| **Product Impact** | Removes user input, but every user in a deployment is forced into the same tenant whether or not the mapping is correct. |
-| **Cost & Complexity** | Low for a single-tenant deployment, with environment and header wiring. |
-| **Long-Term Maintainability** | Poor as organizations grow because tenancy lives in deployment configuration rather than identity data. |
-| **Failure Modes** | A wrong or missing environment value breaks or misroutes every login, and multiple tenants require separate deployments. |
-| **Operational Risks** | Configuration drift has a deployment-wide blast radius and is difficult for users to diagnose or self-correct. |
-| **Mitigations** | Startup validation, environment monitoring, deployment isolation, and membership checks. |
-| **Contextual Fit** | Acceptable for a truly single-tenant installation, not this shared multi-organization application. |
+| **End-to-End Behavior** | Backend maps verified organization domains; signup requires verified email ownership and derives tenant from the verified domain. |
+| **Product Impact** | Low-friction self-service onboarding for organizations with stable, exclusive domains. |
+| **Cost & Complexity** | High: email delivery, verification lifecycle, domain ownership administration, retries, and support paths. |
+| **Long-Term Maintainability** | Reasonable at scale, but domain policies become a separate authorization subsystem. |
+| **Failure Modes** | Shared domains, contractors, aliases, domain ownership changes, delayed email, and compromised mailboxes. |
+| **Operational Risks** | A domain misconfiguration can grant broad access; email infrastructure becomes security-critical. |
+| **Mitigations** | Domain verification, deny/allow policies, audited changes, verified-email expiry, and manual exception handling. |
+| **Contextual Fit** | Not suitable for this repository because it has no verified-email flow and the implementation cost exceeds the current onboarding scope. |
 
-### Option D — User↔organization relation (`users.tenant_id`) + login tenant-implicit + signup dropdown ✅ **CHOSEN & IMPLEMENTED**
+### Option C — Pending account with explicit administrator approval ❌ Not selected
 
 | Dimension | Assessment |
 |---|---|
-| **End-to-End Behavior** | Signup/administration assigns `users.tenant_id`; login derives tenant context from the authenticated user and requires no tenant input. |
-| **Product Impact** | Login remains a familiar two-field flow and wrong-tenant selection becomes structurally impossible. |
-| **Cost & Complexity** | Medium–high: migration/backfill, model relation, organization listing, signup changes, UI updates, and test rewrites. |
-| **Long-Term Maintainability** | A standard `belongs_to :organization` relation provides one scalable source of truth. |
-| **Failure Modes** | Users without an organization are rejected; incorrect provisioning can assign the wrong organization; public organization metadata needs minimization. |
-| **Operational Risks** | Migration/backfill errors can block login, and organization reassignment becomes a sensitive administrative operation. |
-| **Mitigations** | Validate/backfill all users, fail closed on missing relations, minimize listing fields, and audit controlled reassignment. |
-| **Contextual Fit** | Fixes the data-model root cause, and the small development/test user base makes the one-time backfill proportionate. |
+| **End-to-End Behavior** | A registrant requests access; backend stores a non-privileged pending account; an existing admin reviews and approves membership. |
+| **Product Impact** | Supports unsolicited access requests and gives administrators a review queue. |
+| **Cost & Complexity** | High: pending identity state, approval/rejection lifecycle, notifications, duplicate handling, and recovery UX. |
+| **Long-Term Maintainability** | Flexible, but introduces a broader membership workflow and more persistent states than the product currently needs. |
+| **Failure Modes** | Approval backlog, duplicate requests, accidental approval, abandoned accounts, and race conditions with repeated decisions. |
+| **Operational Risks** | Administrators must monitor a queue; unreviewed personal data remains stored. |
+| **Mitigations** | Expiring requests, deduplication, audit logs, notifications, least-privilege pending state, and cleanup jobs. |
+| **Contextual Fit** | Disproportionate for the current deadline and product because onboarding is initiated by known administrators. |
 
-Trade-offs accepted: breaking change for phase-1 header-based logins (intentional — the phase-1 behavior itself is revoked); signup exposes a public org listing (id/name/scheme only — nothing sensitive).
+Option A was selected because it supplies an explicit, auditable grant with materially lower lifecycle complexity than domain verification or a pending-account system.
 
 ## 4. Solution Implemented
 
-**Backend**
-- `db/migrate/20260817110000_add_tenant_id_to_users.rb` — `users.tenant_id` (bigint): backfills existing users to the first organization, enforces NOT NULL, adds index + FK to `organizations`. Down migration reversible.
-- `api/app/models/user.rb` — `belongs_to :organization, foreign_key: :tenant_id` (required by default → an org-less user cannot be created).
-- `api/app/controllers/api/v1/authentication_controller.rb` — `authenticate`:
-  - scheme = `user.organization.scheme`; any `X-Tenant-Scheme` header is **ignored** (no override).
-  - missing relation → `401 "Account is not assigned to an organization"` (defense in depth; DB already enforces).
-  - new `signup` action (`POST /api/v1/auth/signup`): validates `organization_id` (422 required/not found), creates the user already assigned to the org, returns `201` + token with the org's scheme. **Always creates an `admin` account** — the only functional role in this platform (login requires `admin`; every protected page requires assessor permissions; candidates use invite tokens without accounts; the legacy `user` role has no flow and would be an unusable trap).
-- `api/app/controllers/api/v1/organizations_controller.rb` (new) — `GET /api/v1/organizations`: public minimal listing `id + name + scheme` (excludes `config`, hosts, alias hosts) for the signup dropdown.
-- `api/config/routes.rb` — `auth/signup` + `organizations` routes.
+### Existing tenant-implicit login retained
 
-**Frontend**
-- `web/src/services/auth.ts` — `login({email, password})` without any tenant header; `signup({email, password, organization_id})` (no role — always admin server-side).
-- `web/src/services/organizations.ts` (new) — `organizationsApi.list()`.
-- `web/src/pages/auth/LoginPage.tsx` — tenant field removed; backend errors surfaced verbatim (e.g. "Account is not assigned to an organization"); CTA **"Don't have an account? Sign up"** below the button; password uses the shared `PasswordInput`.
-- `web/src/pages/auth/SignupPage.tsx` — organization dropdown fed by the listing (empty list → message + disabled submit), role radio **removed** (signup always creates an admin account), shared `PasswordInput`, auto-login on success.
-- `web/src/components/ui/password-input.tsx` (new) — reusable password field with show/hide toggle, used by both auth pages (reviewer correction — see §7).
-- `web/src/App.tsx` — `/signup` route activated (dead code removed).
-- `web/.env.example` — `VITE_DEV_TENANT_SCHEME` removed.
+- `users.tenant_id` remains NOT NULL with an organization foreign key.
+- `User` remains bound to one organization.
+- Login still accepts email and password only and derives JWT `scheme` from `user.organization`.
+- Client tenant headers cannot override the user's persisted organization.
 
-Unchanged: JWT still carries the `scheme` claim; TenantResolverMiddleware and WS authorization keep resolving from the token/header for candidate flows; `X-Tenant-Scheme` still works for non-JWT paths.
+### Invitation persistence and token handling
+
+- Added `administrator_invitations` with UUID identity, `tenant_id`, `inviter_id`, normalized `recipient_email`, unique SHA-256 `token_digest`, `expires_at`, `accepted_at`, `revoked_at`, timestamps, indexes, foreign keys, and a terminal-state check constraint.
+- Invitation issuance uses a 32-byte URL-safe random token and a server-owned 24-hour expiry.
+- Only the digest is persisted. The raw signup link is returned once on creation and is absent from list responses.
+- Rails filters invitation tokens, token digests, and passwords from request and SQL bind logs.
+
+### Protected administrator management
+
+- Added authenticated create, list, and revoke endpoints.
+- The persisted inviter is reloaded from the database and must still be an `admin` in the JWT tenant.
+- Tenant scope comes from the persisted inviter, never request input.
+- Cross-tenant invitation lookup returns no invitation data.
+- Added a protected responsive UI for create, one-time copy, list, status display, retry, empty state, and revocation.
+
+### Public validation and atomic redemption
+
+- Public validation accepts the raw token in a POST body and returns only bound email, organization name, and expiry for an active invitation.
+- Missing, malformed, unknown, expired, revoked, or accepted tokens receive the same `invalid_invitation` response.
+- Signup accepts only invitation token, email, and password as its functional contract.
+- Redemption locks the invitation row inside the same database transaction that creates the user and writes `accepted_at`.
+- Tenant comes from the invitation and role is the backend-owned literal `admin`; supplied `organization_id`, `tenant_id`, or `role` values are ignored.
+- JWT issuance happens only after transaction success.
+- A duplicate email or other user validation failure rolls back without consuming the invitation.
+- Public organization listing and its frontend service were removed because no remaining flow consumes them.
+
+### Frontend onboarding
+
+- `/signup` without an invitation shows an invitation-required state and no registration form.
+- A valid invitation auto-populates the email as read-only and organization as disabled/read-only informational context.
+- The organization field is never submitted as authority.
+- Invalid/unavailable and network failures are distinct; network failure supports retry.
+- The login page no longer advertises a public signup link.
+- Candidate invitation routes and behavior are unchanged.
 
 ## 5. Acceptance Criteria & Edge Cases
 
-| # | Criterion | Input | Expected Behavior | Edge Case |
-|---|-----------|-------|-------------------|-----------|
-| 1 | User must have a tenant | account without an organization tries to log in | **401** "Account is not assigned to an organization", no token | DB NOT NULL + FK makes this row impossible; controller guard is defense in depth |
-| 2 | Login tenant-implicit | email+password of a user with an org | **200** JWT claim `scheme` = the account's org scheme | two orgs with different schemes — token always reflects the account, never any input |
-| 3 | No cross-tenant access | user of tenant A requests tenant B data (token A) | rejected by existing scoping — unchanged | — |
-| 4 | Header cannot override | `X-Tenant-Scheme: <other>` sent at login | **ignored** — scheme still from the account | prevents pretending to be another org |
-| 5 | Migration safe | `users.tenant_id` added | backfill done (dev/test users), column NOT NULL, FK present | down migration reversible; backfill idempotent |
-| 6 | Signup active + admin-only | `GET /organizations` + `POST /auth/signup` | dropdown lists id+name+scheme; submit creates an **admin** account assigned to the chosen org, login-capable | no orgs in DB → dropdown empty + message; duplicate email → 422; unknown/missing org_id → 422; role param ignored |
-| 7 | Login → signup CTA | link below the Sign in button | navigates to `/signup` | — |
-| 8 | Tenant field removed | LoginPage | no tenant field, no helper text; submit sends plain credentials | regression: clean login still works |
-| 9 | 401/403 interceptor | login fails (no org / wrong password) | backend error shown in UI (no redirect/reload) | phase-1 behavior preserved |
+| # | Criterion | Expected behavior | Verification |
+|---|---|---|---|
+| 1 | Login tenant remains authoritative | JWT scheme comes from `user.organization`; request headers cannot override it | RSpec regression |
+| 2 | No-invitation signup | No user or JWT; `422 invalid_invitation` | RSpec, API smoke test, browser verification |
+| 3 | Valid administrator invitation | Creates one `admin` for the invitation tenant and email | RSpec and browser verification |
+| 4 | Tenant display | Organization appears automatically and disabled/read-only | Vitest and browser verification |
+| 5 | Client tampering | Supplied tenant/organization/role cannot alter persisted tenant or role | RSpec and request-contract Vitest |
+| 6 | Token lifecycle | Missing, malformed, expired, revoked, accepted, and wrong-email requests are rejected generically | RSpec |
+| 7 | Single use under concurrency | Two simultaneous redemptions create at most one user | Two-connection PostgreSQL race test |
+| 8 | Duplicate email | Returns validation failure while invitation remains active | RSpec |
+| 9 | Tenant isolation | Admins list/revoke only invitations from their persisted tenant | RSpec |
+| 10 | Existing administrators | Existing accounts retain login and protected application access | Login regression and browser verification |
+| 11 | Candidate separation | Candidate session tokens cannot redeem administrator signup | RSpec |
+| 12 | Secret handling | Raw token absent from persistence/list responses/logs | Model/request tests and log smoke test |
+| 13 | Public organization discovery | Signup no longer depends on or exposes the organization picker endpoint | Route and frontend regression tests |
+| 14 | UI failure states | Loading, empty, invalid, network retry, create, copy, and revoke states do not report false success | Vitest |
 
 ## 6. Tests & Verification
 
-- **RSpec** — `authentication_spec.rb` (rewritten, 9 examples): AC#1 denied-without-org; AC#2 scheme-from-account across two orgs; AC#4 header ignored + clean login; AC#5 NOT NULL/FK + model refuses org-less user; wrong-password/unknown-email regressions. `signup_spec.rb` (6): created as admin with org assigned + token scheme, 422 unknown/missing org, duplicate email, role param ignored + created account can log in, public. `organizations_spec.rb` (3): id+name+scheme only, no sensitive fields, public. **18 auth-related examples.**
-- **Full backend suite** — **76 examples, 0 failures.**
-- **Seeded fault test** — (a) removed the org guard in `authenticate`: AC#1 failed (500 instead of 401); (b) restored the old header/`LIMIT 1` resolution: AC#2 failed ("expected tenant-b, got tenant-a" — misrouting back). Both reverted; suite green again.
-- **Vitest** — `LoginPage.test.tsx` (rewritten, 6): no tenant field; toggle via shared `PasswordInput`; plain login payload; backend error surfaced; generic fallback; CTA link. `auth.test.ts` (rewritten, 3): no header sent; signup payload carries `organization_id` (no role). `SignupPage.test.tsx` (new, 7): dropdown from listing; signup toggle; submit blocked until org selected; valid submit → navigate; backend error; empty list → disabled; listing failure → error. **16 auth tests; full frontend suite 37, 0 failures; `tsc --noEmit` clean.**
-- **Manual (backend)** — the AC#4 header-ignore, AC#1 no-org and AC#6 signup paths are covered by the seeded-fault RSpec above; a curl spot-check is available in the phase-2 verify script (optional).
-- **Manual (browser)** — verified end-to-end by the reviewer: signup via the organization dropdown → account created and auto-redirected to `/assessments` without being kicked; logging back in with the same credentials works; the login page has no tenant field and the signup password has the eye toggle.
+- **Backend:** model coverage for email normalization, digest uniqueness, derived status, and terminal state; request coverage for issue/list/revoke authorization and tenant isolation; signup coverage for every invalid state, tampering, duplicate email rollback, candidate-token separation, JWT tenant, and single-use behavior; a real two-connection PostgreSQL race test verifies atomic redemption.
+- **Frontend:** invitation-gated signup tests cover missing token, validation, disabled tenant, read-only email, request shape, invalid/unavailable state, retry, password behavior, duplicate email, and navigation. Management-page tests cover empty state, create, one-time link copy, list, revoke, failure, and retry. Navigation and login tests cover the protected menu and absence of a public signup CTA.
+- **Full RSpec:** **98 examples, 0 failures**.
+- **Full Vitest:** **61 tests, 0 failures**.
+- **TypeScript and production build:** passed.
+- **API smoke:** a no-invitation request containing `organization_id` and `role` returned `422 invalid_invitation`; no user was created. Rails logs showed invitation token, digest, and password values as `[FILTERED]`.
+- **Manual before:** public signup selected `Test Corp`, created an administrator, and redirected directly to `/assessments`, proving the issue.
+- **Manual after:** no-token signup was blocked; an existing administrator created and copied an invitation; the recipient saw the invitation-bound tenant and email, signed up successfully, and reached `/assessments`; reused and revoked links were unavailable. The login-page signup link was removed and visually verified.
 
 ## 7. AI-Human Verification
 
-Phase 1 (kept): (1) RSpec 500 from form-encoded params with a JSON content type — fixed by serializing `params.to_json` like the real axios client; (2) the required-header error was initially under the submit button — reviewer moved it under the field with `error ?? info` semantics.
-
-Phase 2:
-1. **Decision evolution A → D (product review).** The reviewer revoked the phase-1 solution after a product discussion: a tenant field at login adds no verifiable validity (no user↔org relation exists), is unusual for a 1-account = 1-company flow, and is not mandated by the brief. The final approach anchors tenancy in a data relation. Both phases remain in the PR history and description for auditability.
-2. **Reusable `PasswordInput` (reviewer correction).** The eye-toggle lived inline in LoginPage only; signup had no toggle at all. Reviewer: the field should be reusable so both pages share one implementation. Extracted `ui/password-input.tsx` (forwardRef + Eye/EyeOff), used by login and signup.
-3. **"User" role trap found by the reviewer during manual verification.** Reproduced: signup with role "user" succeeded and auto-logged in, then the assessor page rejected the token (401 → redirect to login), and the same credentials could never log in again (login requires `admin`). Root cause: role "user" is vestigial — model allows it, but nothing in the platform can use it (login rejects it, every protected page requires admin/assessor, candidates use invite tokens without accounts). Fixed by making signup always create an admin account and removing the role radio; regression test asserts the created account can log in.
-4. **NOT NULL surfaced in tests.** The migration's NOT NULL + FK made an org-less fixture row impossible to insert — itself proof the invariant is structural. AC#1 is therefore tested by stubbing a broken organization lookup plus schema assertions, then guarding it in the controller.
+1. **Tenant binding was initially mistaken for membership authorization.** The earlier solution correctly derived login tenancy but left public administrator creation open. Reviewer feedback separated these two security boundaries and required a server-issued administrator grant. The correction is the invitation flow documented here.
+2. **Migration index length.** The first migration run surfaced PostgreSQL's 63-character index-name limit. Explicit shorter index names were added before the migration completed successfully.
+3. **Development verification origin.** The first browser instruction used `127.0.0.1`, while development CORS allowed `localhost`. The API returned 200 but the browser blocked the response. Verification was corrected to `http://localhost:5173` without weakening CORS.
+4. **Login CTA scope.** The first follow-up UI retained a signup link on the login page. Manual review determined it was no longer relevant for invitation-only onboarding, so the CTA and unused import were removed and a regression test now asserts its absence.
 
 ---
 
-*F-03 phase 2 completed: 76 RSpec + 37 Vitest passing, seeded faults (a) and (b) proven, decision evolution A → D and the signup role-user trap documented in the PR.*
+*F-03 completed and verified: tenant-implicit login is preserved, while administrator membership is now granted only through secure, tenant-bound, single-use invitations.*
