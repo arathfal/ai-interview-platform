@@ -33,32 +33,52 @@ This exposes candidates' personal data across organizational boundaries — rele
 
 **Gap to ideal:** every model holding candidate data MUST (1) have a `tenant_id` column + FK to `organizations`, (2) `include TenantScoped` (auto-scope), (3) have the controller use relational scope from `current_tenant`.
 
-## 3. Options & Trade-off
+## 3. Options & Trade-offs
 
-### Option A — Full `tenant_id` column + `TenantScoped` ✅ **CHOSEN**
+| Option | Authority | Enforcement point | Relative cost | Contextual fit |
+|---|---|---|---|---|
+| **A — `tenant_id` + `TenantScoped`** ✅ **CHOSEN & IMPLEMENTED** | Tenant columns and model concern | Database, model, controller, and worker | High | Reuses the repository's existing tenancy convention |
+| **B — Relation joins** ❌ Not selected | Existing parent relations | Every query callsite | Medium | Avoids migrations but depends on repeated manual scoping |
+| **C — Controller authorization** ❌ Not selected | Request controller | Selected HTTP endpoints | Low | Useful only as defense in depth, not primary isolation |
+
+### Option A — Full `tenant_id` column + `TenantScoped` ✅ **CHOSEN & IMPLEMENTED**
 
 | Dimension | Assessment |
-|---------|-----------|
-| **Product Impact** | Candidate data isolation across clients guaranteed (UU PDP) |
-| **Cost** | High: 3 migrations + backfill + worker/service wrap |
-| **Maintainability** | Best — one `TenantScoped` pattern across all models, consistent with Session/Assessment/Vacancy |
-| **Failure Modes** | Create outside the request cycle fails validation (fail-safe); migrations reversible, backfill verified |
-| **Contextual Fit** | Codebase convention already exists; adding 3 models actually reduces mental complexity |
+|---|---|
+| **End-to-End Behavior** | The database stores tenant ownership, models apply `TenantScoped`, controllers inherit scoped lookup, and workers/services must establish tenant context. |
+| **Product Impact** | Candidate data remains isolated across clients, directly protecting confidentiality and UU PDP obligations. |
+| **Cost & Complexity** | High: three migrations, backfill validation, indexes/foreign keys, and worker/service context changes. |
+| **Long-Term Maintainability** | One reusable model concern matches Session, Assessment, and Vacancy and reduces per-query security decisions. |
+| **Failure Modes** | Missing tenant context rejects creation; an incorrect backfill can misassign rows; and an omitted model include can leave a path unscoped. |
+| **Operational Risks** | Migration locks, backfill mistakes, and worker failures during rollout can affect availability or ownership correctness. |
+| **Mitigations** | Use reversible migrations, verified backfills, constraints/indexes, explicit worker context, and isolation tests for every access path. |
+| **Contextual Fit** | The codebase already uses this tenancy convention, so the higher one-time cost reduces long-term mental and security complexity. |
 
-### Option B — Scope via joins on existing relations ❌ Rejected
+### Option B — Scope via joins on existing relations ❌ Not selected
 
-No migration; controllers gain `joins(session: :assessment).where(sessions: { tenant_id: ... })`. Weakness: **manual scoping on every query** — one developer forgetting the scope = IDOR returns. Join overhead per query. Does not solve the root cause (models remain tenancy-unaware). *"A security fix must not rely on developers remembering to scope every query."*
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Controllers and services would join through session and assessment relations and add tenant predicates to every read or mutation. |
+| **Product Impact** | Correctly scoped callsites protect data, but one missed query reintroduces cross-tenant exposure. |
+| **Cost & Complexity** | Medium initially: no migration, but every query needs custom joins and tests. |
+| **Long-Term Maintainability** | Poorer than A because tenancy remains implicit and new callsites repeat security-sensitive query logic. |
+| **Failure Modes** | A forgotten join, changed association, or alternate worker/console path can bypass isolation; joins can also duplicate or omit rows. |
+| **Operational Risks** | Query complexity and join overhead grow with traffic and schema evolution, while audit coverage becomes harder to prove. |
+| **Mitigations** | Centralize scopes, require review checklists, add per-endpoint isolation tests, and monitor query plans—controls that still do not eliminate omission risk. |
+| **Contextual Fit** | It avoids schema work but conflicts with the repository's established tenant-column pattern and the severity of an IDOR finding. |
 
-### Option C — Controller-level authorization check ❌ Rejected
+### Option C — Controller-level authorization check ❌ Not selected
 
-`before_action :verify_tenant_access` in the controller. Weakness: **bypassable** — worker/console/rake/new API endpoints without the check still leak. N+1 queries. This is the *last line of defense*, not primary protection; it violates the **defense in depth** principle:
-
-| Layer | Option A | Option C |
-|-------|--------|--------|
-| Database | ✅ FK constraint | ❌ |
-| Model | ✅ default_scope | ❌ |
-| Controller | ✅ automatic via scope | ⚠️ manual check |
-| Worker | ✅ context required | ❌ bypassable |
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | A `before_action` would validate tenant access for selected HTTP endpoints while models, workers, console tasks, and future endpoints remain tenancy-unaware. |
+| **Product Impact** | Covered routes reject unauthorized users, but uncovered paths can still leak or mutate candidate data. |
+| **Cost & Complexity** | Low initially, with small controller changes and route tests. |
+| **Long-Term Maintainability** | Weak because every new endpoint must remember the guard and non-controller execution needs a different mechanism. |
+| **Failure Modes** | Skipped callbacks, alternate endpoints, background jobs, and direct model access bypass the check; N+1 authorization queries can appear. |
+| **Operational Risks** | Protection can silently erode as routes and jobs are added, creating a false sense of complete tenant isolation. |
+| **Mitigations** | Apply shared controller concerns, deny by default, add route coverage tests, and retain model/database enforcement as the primary layer. |
+| **Contextual Fit** | Appropriate as an additional boundary check, but insufficient as the sole fix for a P0 cross-tenant data exposure. |
 
 ### Trade-offs accepted (Option A)
 

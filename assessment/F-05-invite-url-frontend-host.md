@@ -30,22 +30,40 @@ This is a **defective implementation**, not a missing feature: the link-generati
 2. Invite URL points to the frontend: `https://ai-interview.rakamin.com/interview/:token`.
 3. README documents the difference between both env vars clearly.
 
-## 3. Options & Trade-off
+## 3. Options & Trade-offs
 
-### Option A — Introduce a separate `FRONTEND_BASE_URL` ✅ **CHOSEN**
+| Option | Configuration authority | Scope | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Separate frontend URL** ✅ **CHOSEN & IMPLEMENTED** | Explicit `FRONTEND_BASE_URL` | Invite generation and deployment config | Low | Unambiguous, correct destination |
+| **B — Reuse `APP_BASE_URL`** ❌ Not selected | Ambiguous shared variable | Config-only change | Low | Risks redirecting API consumers to the frontend |
+
+### Option A — Introduce a separate `FRONTEND_BASE_URL` ✅ **CHOSEN & IMPLEMENTED**
 
 Add env var `FRONTEND_BASE_URL`; `session.rb#invite_url` uses `ENV.fetch('FRONTEND_BASE_URL', default_frontend)`. Update `configmap.yaml`, `application.yml.sample`, README.
 
 | Dimension | Assessment |
-|---------|-----------|
-| **Product Impact vs Cost** | Candidates can directly open the interview page — the core workflow works. Low cost (1 env var + 1 line + config/README). |
-| **Long-term Maintainability** | Resolves CS-4: two separate, unambiguous vars; API URL and frontend URL cannot be swapped. |
-| **Failure Modes** | If `FRONTEND_BASE_URL` is forgotten at deploy → clear dev default (not silent 404). Default can "fail loud" in dev logs. |
-| **Contextual Fit** | Most appropriate: simplifies semantics, prevents recurrence, fits CS-4. Minimal & localized change for the deadline. |
+|---|---|
+| **End-to-End Behavior** | Invite generation reads an explicit frontend base URL and produces the existing candidate route. |
+| **Product Impact** | Candidates land on the usable interview page instead of an API 404. |
+| **Cost & Complexity** | Low: one environment variable plus localized config, documentation, and tests. |
+| **Long-Term Maintainability** | Separate API and frontend variables keep deployment intent explicit. |
+| **Failure Modes** | Missing production configuration can fall back to a development host or produce unusable links. |
+| **Operational Risks** | Environment drift between deployments can distribute incorrect invitation URLs. |
+| **Mitigations** | Document and validate the variable, provide a clear development default, and test generated URLs. |
+| **Contextual Fit** | Minimal and aligned with the existing split frontend/API deployment. |
 
 ### Option B — Just change the `APP_BASE_URL` value to the frontend host ❌ Rejected
 
-Fast (change only the config value), but `APP_BASE_URL` stays ambiguous (used for API base + frontend URL). CS-4 not resolved; risky elsewhere — e.g. internal code calling the API via `APP_BASE_URL` would hit the frontend instead.
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | One shared base URL would point invites to the frontend while existing API consumers continue reading the same variable. |
+| **Product Impact** | Invite links may work, but internal API calls can be redirected to the wrong service. |
+| **Cost & Complexity** | Very low initially: configuration-only. |
+| **Long-Term Maintainability** | Poor because one name retains two incompatible meanings. |
+| **Failure Modes** | Changing the value fixes one caller while breaking another; future consumers cannot infer the intended host. |
+| **Operational Risks** | A deployment config edit can cause broad routing failures outside the invite flow. |
+| **Mitigations** | Audit every consumer and add routing tests, which still leaves the semantic ambiguity unresolved. |
+| **Contextual Fit** | Unsuitable for an architecture with separately hosted API and frontend services. |
 
 ### Trade-offs accepted
 

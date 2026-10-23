@@ -32,20 +32,38 @@ Gap to ideal condition:
 
 ## 3. Options & Trade-offs
 
+| Option | Data destination | Candidate choice | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Third-party fallback + consent** ❌ Not selected | Internal + external | Consent modal | Medium | Unnecessary disclosure remains |
+| **B — Internal endpoint only** ✅ **CHOSEN & IMPLEMENTED** | Platform-owned | No external disclosure | Low | Privacy-preserving default |
+
 ### Option A — Use own endpoint as default + consent modal for third-party fallback ❌ Rejected
 
-Keep allowing data to leave to third parties as long as a consent modal is shown. Rejected: candidates cannot opt out in this product and the own endpoint is sufficient — consent adds no value when there is no legitimate reason to use third parties at all.
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Internal testing falls back to an external provider after consent. |
+| **Product Impact** | Preserves measurement but interrupts candidates and discloses network metadata. |
+| **Cost & Complexity** | Medium: consent, fallback, auditability, and tests. |
+| **Long-Term Maintainability** | Requires vendor and privacy-policy management. |
+| **Failure Modes** | Consent may not be freely given and external service can fail. |
+| **Operational Risks** | Vendor changes and cross-border processing add compliance burden. |
+| **Mitigations** | Explicit opt-in, vendor review, minimization, and audit logs. |
+| **Contextual Fit** | Poor because an owned endpoint is already sufficient. |
 
-### Option B — Remove hard-coded external URLs; require the internal endpoint ✅ **CHOSEN**
+### Option B — Remove hard-coded external URLs; require the internal endpoint ✅ **CHOSEN & IMPLEMENTED**
 
 Remove every external default; the speed test always uses the platform's own endpoints (derived from `VITE_API_BASE_URL`), with env overrides documented as internal-infrastructure-only.
 
-| Aspect | Assessment |
-|--------|-----------|
-| **Product Impact vs Cost** | Candidate privacy preserved (zero third-party by default); low cost because the backend already provides the endpoint. |
-| **Long-term Maintainability** | Correct default + explicit env; easy to evolve; no lurking external constants. |
-| **Failure Modes** | Own endpoint down → skip + light message + interview can still proceed (no blocking on our infrastructure). |
-| **Contextual Fit** | "Use what you own" — the endpoint already exists, just start using it; most UU PDP-compliant; aligns with data-privacy preferences. |
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | The owned endpoint runs the test; failure skips the check without blocking interview start. |
+| **Product Impact** | Preserves privacy and candidate access. |
+| **Cost & Complexity** | Low because the endpoint already exists. |
+| **Long-Term Maintainability** | Explicit internal configuration removes hidden vendor constants. |
+| **Failure Modes** | Outages reduce measurement coverage; bad payloads distort results. |
+| **Operational Risks** | Test traffic consumes owned bandwidth. |
+| **Mitigations** | Non-blocking UX, payload validation, monitoring, and capacity limits. |
+| **Contextual Fit** | Best fits data minimization and existing infrastructure. |
 
 ### Trade-offs accepted (for the chosen option)
 

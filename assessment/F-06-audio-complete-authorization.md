@@ -32,25 +32,52 @@ Gap to ideal condition:
 
 ## 3. Options & Trade-offs
 
-### Option A — Persist a `preparing_to_end_at` flag/timestamp on the session + guard the endpoint ✅ **CHOSEN**
+| Option | Validation authority | Enforcement | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Persist preparation timestamp** ✅ **CHOSEN & IMPLEMENTED** | Session state | WebSocket signal + HTTP guard | Low–medium | Verifiable, auditable transition |
+| **B — Rate limiting** ❌ Not selected | Request frequency | Rack/Redis counter | Medium | Limits volume, not validity |
+| **C — Logging only** ❌ Not selected | Human monitoring | Observability | Low | Detects abuse after impact |
+
+### Option A — Persist a `preparing_to_end_at` flag/timestamp on the session + guard the endpoint ✅ **CHOSEN & IMPLEMENTED**
 
 The WS layer writes a new `preparing_to_end_at` column right before sending the `preparing_to_end` event (exactly where it currently sets the in-memory flag). `audio_complete` only executes the end when the flag exists and is within a validity window; otherwise **409 Conflict**.
 
 | Dimension | Assessment |
-|-----------|-----------|
-| **Product Impact** | Closes the premature-end gap without any candidate-visible change — WS→HTTP flow is identical, the flag is written at the same point as the existing event |
-| **Cost** | Low–medium: 1 migration (nullable column), set flag at the 3 `preparing_to_end` send sites (middleware), guard in controller, RSpec |
-| **Long-term Maintainability** | Good: the state transition becomes **verifiable** — an auditable persisted proof; removes blind trust in a public caller |
-| **Failure Modes** | WS crashes before the flag → auto-end won't run (interview is already broken; safer than malicious end). Session stays `active` with partial transcript, endable manually by the assessor via the existing JWT path. Historical false negative does not return: the flag is written **before** the event, so the HTTP flow timing is unchanged |
-| **Contextual Fit** | Best fit for the existing architecture: minimal change, reuses the existing signal point, RSpec-able |
+|---|---|
+| **End-to-End Behavior** | WebSocket processing persists `preparing_to_end_at` before notifying the client; `audio_complete` accepts only a fresh proof. |
+| **Product Impact** | Prevents premature termination without changing the legitimate candidate flow. |
+| **Cost & Complexity** | Low–medium: one migration, three signal sites, one controller guard, and request coverage. |
+| **Long-Term Maintainability** | The transition becomes explicit, persisted, and testable. |
+| **Failure Modes** | A crash before the write blocks auto-end; stale timestamps reject late calls; clock/window errors can create false negatives. |
+| **Operational Risks** | Migration or write failures can leave sessions active with partial transcripts. |
+| **Mitigations** | Write before the event, use a bounded validity window, return 409, log rejection, and preserve assessor termination. |
+| **Contextual Fit** | Reuses the existing signal point and adds the smallest auditable server-side proof. |
 
 ### Option B — Rate-limit `audio_complete` per token (Rack::Attack / Redis counter)
 
-Only 1 successful call per token; further calls get 429. Rejected as a standalone fix: it controls **volume**, not **validity** — the first call still ends the session without verification, and legit frontend retries could suffer false positives. Usable later as defense-in-depth on top of A.
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | A token may call the endpoint only within a configured request quota. |
+| **Product Impact** | Reduces repeated abuse but the first unauthorized call still ends the session. |
+| **Cost & Complexity** | Medium when distributed counters and retry behavior are included. |
+| **Long-Term Maintainability** | Central throttling is reusable but does not encode workflow validity. |
+| **Failure Modes** | First-call attacks succeed; legitimate retries can receive 429; counter loss resets protection. |
+| **Operational Risks** | Redis availability and threshold tuning affect valid session completion. |
+| **Mitigations** | Use as defense in depth with per-token metrics and fail-safe limits, never as the authorization proof. |
+| **Contextual Fit** | Helpful supplementary control, insufficient as the standalone fix. |
 
 ### Option C — Log & monitor only
 
-Record all calls and detect anomalies manually. Rejected: P1 severity demands an active guard, not passive observability. The chosen option keeps a warn log for rejected calls, capturing the monitoring value anyway.
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Calls remain unrestricted while logs and alerts flag suspicious termination patterns. |
+| **Product Impact** | Provides no immediate protection; affected interviews can end before response. |
+| **Cost & Complexity** | Low implementation cost with ongoing monitoring effort. |
+| **Long-Term Maintainability** | Useful observability, but remediation depends on human response. |
+| **Failure Modes** | Alerts can be late, noisy, or ignored; low-volume attacks evade thresholds. |
+| **Operational Risks** | Incident response bears the full protection burden and cannot restore lost interview state. |
+| **Mitigations** | Structured logging, alert tuning, and runbooks—best retained alongside an active guard. |
+| **Contextual Fit** | Inadequate alone for a P1 integrity issue. |
 
 ## 4. Solution Implemented
 

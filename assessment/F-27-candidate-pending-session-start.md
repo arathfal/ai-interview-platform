@@ -25,20 +25,38 @@ F-02's intent was abuse prevention: a leaked invite token must not corrupt a *te
 
 **Gap to ideal:** `pending` sessions must be connectable (activated on first connect by `StartHandler`); only terminal sessions (`ended`/`failed`) must reject audio injection.
 
-## 3. Opsi & Trade-off
+## 3. Options & Trade-offs
 
-### Opsi A — Allow `pending` to connect; reject only terminal states ✅ **CHOSEN**
+| Option | Authority | UX change | Relative cost | Outcome |
+|---|---|---|---|---|
+| **A — Candidate connects from pending** ✅ **CHOSEN & IMPLEMENTED** | Invite/session rules | None | Low | Restores intended flow |
+| **B — Assessor activation** ❌ Not selected | New assessor action | Extra step | High | Strands pending sessions |
 
-| Aspect | Assessment |
-|---------|-----------|
-| **Product Impact vs Cost** | Restores the designed flow (assessor creates → candidate starts) with a one-line auth change; zero cost to candidates |
-| **Long-term Maintainability** | Semantics become explicit: connectable = `pending|active`, terminal = `ended|failed`; no hidden ordering dependency between auth and activation |
-| **Failure Modes** | A leaked token can start a *new* interview — but that is the invite model's inherent property (the token IS the credential); the important guard (no injection into finished/failed sessions) is preserved |
-| **Contextual Fit** | Minimal diff, keeps the F-02 single-source-of-truth concern intact, spec updated to encode the correct contract |
+### Option A — Allow `pending` to connect; reject only terminal states ✅ **CHOSEN & IMPLEMENTED**
 
-### Opsi B — Activate the session from the assessor side (new endpoint/UI) ❌ Rejected
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Valid invites connect pending/active sessions; terminal sessions are rejected. |
+| **Product Impact** | Restores the intended candidate-start flow. |
+| **Cost & Complexity** | Low: one condition and focused tests. |
+| **Long-Term Maintainability** | Connectable and terminal semantics stay explicit. |
+| **Failure Modes** | Leaked tokens can start pending sessions; new statuses can be misclassified. |
+| **Operational Risks** | Token leakage remains credential leakage. |
+| **Mitigations** | Unguessable tokens, centralized predicates, and status tests. |
+| **Contextual Fit** | Matches product design and shared authorization. |
 
-Would require a new activation endpoint + assessor UI step + a new status-transition contract. Larger surface, changes the product UX (assessor must "open" a session before sending the invite), and still leaves existing pending sessions stranded. Rejected: the product design already states the candidate's first connect activates the session.
+### Option B — Activate the session from the assessor side (new endpoint/UI) ❌ Rejected
+
+| Dimension | Assessment |
+|---|---|
+| **End-to-End Behavior** | Assessors activate sessions before candidates connect. |
+| **Product Impact** | Adds coordination and can strand candidates. |
+| **Cost & Complexity** | High: endpoint, UI, transition contract, and tests. |
+| **Long-Term Maintainability** | Adds a required workflow step. |
+| **Failure Modes** | Forgotten or concurrent activation blocks starts. |
+| **Operational Risks** | Candidate access depends on assessor availability. |
+| **Mitigations** | Notifications, idempotency, migration, and timeouts. |
+| **Contextual Fit** | Conflicts with candidate-first activation. |
 
 ### Trade-offs accepted (for the chosen option)
 
