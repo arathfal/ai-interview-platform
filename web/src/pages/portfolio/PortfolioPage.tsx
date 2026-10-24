@@ -11,7 +11,16 @@ import { portfoliosApi } from "@/services/portfolios";
 import { extractApiError } from "@/lib/apiErrors";
 import { toast } from "@/stores/toastStore";
 import { usePolling } from "@/hooks/usePolling";
-import { ArrowLeft, Download, Loader2, RefreshCw, Zap, FileText, AlertTriangle } from "lucide-react";
+import {
+  ArrowLeft,
+  Download,
+  Loader2,
+  RefreshCw,
+  Zap,
+  FileText,
+  AlertTriangle,
+  Pencil,
+} from "lucide-react";
 import type { Portfolio, AssessorOverride, Vacancy } from "@/types";
 
 export default function PortfolioPage() {
@@ -26,6 +35,9 @@ export default function PortfolioPage() {
   const [exporting, setExporting] = useState<"pdf" | "json" | null>(null);
   const [candidateName, setCandidateName] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const missingAssessmentSkills = portfolio?.failure_reason === "missing_assessment_skills";
+  const missingCoverage = portfolio?.failure_reason === "missing_coverage";
+  const configurationError = missingAssessmentSkills || missingCoverage;
 
   const fetchPortfolio = useCallback(async () => {
     try {
@@ -217,18 +229,48 @@ export default function PortfolioPage() {
 
       {/* Failed state */}
       {!generating && portfolio?.generation_status === "failed" && (
-        <div className="border border-destructive/40 rounded-lg p-6 text-center space-y-3">
-          <p className="text-sm text-destructive">Portfolio generation failed.</p>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={async () => {
-              await sessionsApi.regeneratePortfolio(Number(sessionId));
-              setGenerating(true);
-            }}
-          >
-            <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
-          </Button>
+        <div
+          role="alert"
+          className="border border-destructive/40 rounded-lg p-10 text-center space-y-3 animate-in fade-in duration-200"
+        >
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">
+              {configurationError ? "This portfolio can't be generated" : "Couldn't generate this portfolio"}
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {missingAssessmentSkills
+                ? "This assessment has no skills to evaluate. Add at least one skill, then create a new interview."
+                : missingCoverage
+                  ? "This interview has no skill coverage to evaluate. Return to the assessment and create a new interview."
+                  : "Something went wrong while analyzing the interview. Try again to restart portfolio generation."}
+            </p>
+          </div>
+          {configurationError ? (
+            <Button
+              size="sm"
+              onClick={() => navigate(`/assessments/${id}/${missingAssessmentSkills ? "edit" : "invite"}`)}
+            >
+              {missingAssessmentSkills ? (
+                <Pencil className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+              ) : (
+                <ArrowLeft className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" />
+              )}
+              {missingAssessmentSkills ? "Edit assessment" : "Back to assessment"}
+            </Button>
+          ) : (
+            <Button
+              size="sm"
+              onClick={async () => {
+                await sessionsApi.regeneratePortfolio(Number(sessionId));
+                setGenerating(true);
+              }}
+            >
+              <RefreshCw className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" /> Retry
+            </Button>
+          )}
         </div>
       )}
 

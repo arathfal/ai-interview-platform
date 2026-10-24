@@ -168,9 +168,18 @@ module Api
           generation_status: portfolio.generation_status,
           generated_at:      portfolio.generated_at,
           generation_error:  portfolio.generation_error,
+          failure_reason:     portfolio_failure_reason(portfolio),
           skills:            portfolio.portfolio_skills.map(&method(:portfolio_skill_json)),
           overrides:         portfolio.assessor_overrides.map(&method(:override_json))
         }
+      end
+
+      def portfolio_failure_reason(portfolio)
+        return nil unless portfolio.failed?
+        return 'missing_assessment_skills' unless portfolio.session.assessment.assessment_skills.exists?
+        return 'missing_coverage' unless portfolio.session.coverage_maps.exists?
+
+        'generation_failed'
       end
 
       def portfolio_skill_json(skill)
