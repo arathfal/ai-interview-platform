@@ -12,10 +12,12 @@ interface UseAudioWebSocketOptions {
   sessionId: number;
   token?: string;
   onAudioChunk: (buffer: ArrayBuffer) => void;
-  onTranscript: (turn: Pick<TranscriptTurn, "speaker" | "text">) => void;
+  onTranscript: (turn: TranscriptTurn) => void;
   onStateChange: (state: InterviewState) => void;
   onSpeakerChange: (speaker: InterviewSpeaker) => void;
   onReconnected?: () => void;
+  onTiming?: (timing: { deadlineAt: string; remainingSeconds: number }) => void;
+  onTakenOver?: () => void;
   /** Called when the session fails permanently (unrecoverable WS error or exhausted reconnect). */
   onFatalError?: (error: InterviewErrorInfo) => void;
 }
@@ -30,6 +32,8 @@ export function useAudioWebSocket({
   onStateChange,
   onSpeakerChange,
   onReconnected,
+  onTiming,
+  onTakenOver,
   onFatalError,
 }: UseAudioWebSocketOptions) {
   const wsRef = useRef<WebSocket | null>(null);
@@ -41,7 +45,10 @@ export function useAudioWebSocket({
   );
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
+    if (
+      wsRef.current?.readyState === WebSocket.OPEN ||
+      wsRef.current?.readyState === WebSocket.CONNECTING
+    ) return;
 
     sessionEndedRef.current = false;
     setConnectionState("connecting");
@@ -74,13 +81,34 @@ export function useAudioWebSocket({
           const msg = JSON.parse(event.data) as WsControlMessage;
           switch (msg.type) {
             case "session_started":
+              if (msg.deadline_at && msg.remaining_seconds !== undefined) {
+                onTiming?.({
+                  deadlineAt: msg.deadline_at,
+                  remainingSeconds: msg.remaining_seconds,
+                });
+              }
               onStateChange("active");
               break;
             case "transcription":
             case "transcript":
               if (msg.speaker && msg.text) {
-                onTranscript({ speaker: msg.speaker === "candidate" ? "candidate" : "assessor", text: msg.text });
+                onTranscript({
+                  id: msg.turn_id ?? msg.turn_number ?? 0,
+                  turn_number: msg.turn_number ?? 0,
+                  speaker: msg.speaker === "candidate" ? "candidate" : "ai",
+                  text: msg.text,
+                  created_at: new Date().toISOString(),
+                });
               }
+              break;
+            case "session_in_use":
+              onStateChange("in_use");
+              break;
+            case "session_taken_over":
+              sessionEndedRef.current = true;
+              reconnectAttemptsRef.current = RECONNECT_DELAYS.length;
+              onTakenOver?.();
+              onStateChange("taken_over");
               break;
             case "speaker_changed":
               // Backend sends speaker_changed:candidate 800ms after AI finishes
@@ -152,7 +180,18 @@ export function useAudioWebSocket({
         onStateChange("error");
       }
     };
-  }, [sessionId, token, onAudioChunk, onTranscript, onStateChange, onSpeakerChange, onReconnected, onFatalError]);
+  }, [
+    sessionId,
+    token,
+    onAudioChunk,
+    onTranscript,
+    onStateChange,
+    onSpeakerChange,
+    onReconnected,
+    onTiming,
+    onTakenOver,
+    onFatalError,
+  ]);
 
   const send = useCallback((buffer: ArrayBuffer) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {

@@ -64,6 +64,8 @@ function makeProps(overrides: Record<string, unknown> = {}) {
     onStateChange: vi.fn(),
     onSpeakerChange: vi.fn(),
     onReconnected: vi.fn(),
+    onTiming: vi.fn(),
+    onTakenOver: vi.fn(),
     onFatalError: vi.fn(),
     ...overrides,
   };
@@ -193,5 +195,77 @@ describe("useAudioWebSocket — fatal error handling (F-07)", () => {
     expect(props.onFatalError).not.toHaveBeenCalled();
     expect(props.onStateChange).not.toHaveBeenCalledWith("error");
     expect(props.onStateChange).not.toHaveBeenCalledWith("reconnecting");
+  });
+
+  it("surfaces session_in_use without treating it as a connection failure", () => {
+    const props = makeProps();
+    const { result } = renderHook(() => useAudioWebSocket(props as never));
+
+    act(() => {
+      result.current.connect();
+      MockWebSocket.instances[0].emitOpen();
+      MockWebSocket.instances[0].emitMessage({ type: "session_in_use" });
+    });
+
+    expect(props.onStateChange).toHaveBeenLastCalledWith("in_use");
+    expect(props.onFatalError).not.toHaveBeenCalled();
+  });
+
+  it("stops reconnecting when this tab is superseded", () => {
+    const props = makeProps();
+    const { result } = renderHook(() => useAudioWebSocket(props as never));
+
+    act(() => {
+      result.current.connect();
+      MockWebSocket.instances[0].emitOpen();
+      MockWebSocket.instances[0].emitMessage({ type: "session_taken_over" });
+      MockWebSocket.instances[0].emitClose();
+    });
+
+    expect(props.onTakenOver).toHaveBeenCalledOnce();
+    expect(props.onStateChange).toHaveBeenLastCalledWith("taken_over");
+    expect(props.onStateChange).not.toHaveBeenCalledWith("reconnecting");
+  });
+
+  it("applies server timing from session_started", () => {
+    const props = makeProps();
+    const { result } = renderHook(() => useAudioWebSocket(props as never));
+
+    act(() => {
+      result.current.connect();
+      MockWebSocket.instances[0].emitOpen();
+      MockWebSocket.instances[0].emitMessage({
+        type: "session_started",
+        deadline_at: "2026-10-25T01:00:00+07:00",
+        remaining_seconds: 600,
+      });
+    });
+
+    expect(props.onTiming).toHaveBeenCalledWith({
+      deadlineAt: "2026-10-25T01:00:00+07:00",
+      remainingSeconds: 600,
+    });
+    expect(props.onStateChange).toHaveBeenLastCalledWith("active");
+  });
+
+  it("preserves stable turn identity for transcript deduplication", () => {
+    const props = makeProps();
+    const { result } = renderHook(() => useAudioWebSocket(props as never));
+
+    act(() => {
+      result.current.connect();
+      MockWebSocket.instances[0].emitOpen();
+      MockWebSocket.instances[0].emitMessage({
+        type: "transcription",
+        speaker: "ai",
+        text: "Welcome back",
+        turn_id: 99,
+        turn_number: 7,
+      });
+    });
+
+    expect(props.onTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 99, turn_number: 7, speaker: "ai", text: "Welcome back" })
+    );
   });
 });

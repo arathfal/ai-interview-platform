@@ -111,4 +111,58 @@ describe("InterviewPage — failure paths (F-07)", () => {
     });
     expect(screen.getByRole("button", { name: /Start Interview/i })).toBeInTheDocument();
   });
+
+  it("shows an active session as a resume with server time and recent transcript", async () => {
+    (sessionsApi.getCandidateInfo as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: {
+        session_id: 8,
+        role_title: "Backend Engineer",
+        time_limit_min: 30,
+        session_status: "active",
+        deadline_at: new Date(Date.now() + 12 * 60 * 1000).toISOString(),
+        remaining_seconds: 720,
+        resume_available: true,
+        recent_transcript: [
+          {
+            id: 41,
+            turn_number: 4,
+            speaker: "ai",
+            text: "Tell me how you handled that failure.",
+            created_at: new Date().toISOString(),
+          },
+        ],
+      },
+    });
+
+    renderInterview();
+
+    expect(await screen.findByRole("heading", { name: "Resume interview" })).toBeInTheDocument();
+    expect(screen.getByText("Tell me how you handled that failure.")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Recent conversation restored");
+    expect(screen.getByRole("button", { name: "Resume interview" })).toBeInTheDocument();
+    expect(screen.queryByText("OS & browser")).not.toBeInTheDocument();
+  });
+
+  it("shows a truthful terminal recovery state when AI context is unavailable", async () => {
+    (sessionsApi.getCandidateInfo as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: {
+        session_id: 9,
+        role_title: "Backend Engineer",
+        time_limit_min: 30,
+        session_status: "active",
+        deadline_at: new Date(Date.now() + 12 * 60 * 1000).toISOString(),
+        remaining_seconds: 720,
+        resume_available: false,
+        recovery_message: "The prior AI conversation context is unavailable.",
+        recent_transcript: [],
+      },
+    });
+
+    renderInterview();
+
+    expect(
+      await screen.findByRole("heading", { name: "Interview context couldn't be restored" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Resume interview" })).not.toBeInTheDocument();
+  });
 });

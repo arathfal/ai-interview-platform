@@ -38,7 +38,10 @@ export default function InterviewPage() {
   const [interviewState, setInterviewState] = useState<InterviewState>("idle");
   const [interviewError, setInterviewError] = useState<InterviewErrorInfo | null>(null);
   const [speaker, setSpeaker] = useState<InterviewSpeaker>(null);
-  const [transcript, setTranscript] = useState<Pick<TranscriptTurn, "speaker" | "text">[]>([]);
+  const [transcript, setTranscript] = useState<TranscriptTurn[]>([]);
+  const [deadlineAt, setDeadlineAt] = useState<string | null>(null);
+  const [initialRemainingSeconds, setInitialRemainingSeconds] = useState(0);
+  const [restoredTranscript, setRestoredTranscript] = useState(false);
   const [hardwareCheckDone, setHardwareCheckDone] = useState(false); // kept for green banner
   const [connectionLostLong, setConnectionLostLong] = useState(false);
   const [reconnectedPrompt, setReconnectedPrompt] = useState(false);
@@ -59,8 +62,24 @@ export default function InterviewPage() {
         if (cancelled) return;
         setCandidateInfo(res.data);
         setSessionId(res.data.session_id);
-        if (res.data.session_status === "ended") {
+        setDeadlineAt(res.data.deadline_at ?? null);
+        setInitialRemainingSeconds(res.data.remaining_seconds ?? 0);
+        if (res.data.session_status === "ended" || res.data.session_status === "failed") {
           setInterviewState("complete");
+        } else if (res.data.session_status === "active") {
+          const restored = res.data.recent_transcript ?? [];
+          setTranscript(restored);
+          setRestoredTranscript(restored.length > 0);
+          if (res.data.resume_available === false) {
+            setInterviewError({
+              kind: "resume_unavailable",
+              message: res.data.recovery_message ?? undefined,
+              recoverable: false,
+            });
+            setInterviewState("error");
+          } else {
+            setInterviewState("resume");
+          }
         } else {
           // Reset back to pre-start — relevant after a retry from the error screen.
           setInterviewState("idle");
@@ -130,8 +149,17 @@ export default function InterviewPage() {
     reconnectedPromptTimerRef.current = setTimeout(() => setReconnectedPrompt(false), 10_000);
   }, []);
 
-  const handleTranscript = useCallback((turn: Pick<TranscriptTurn, "speaker" | "text">) => {
-    setTranscript((prev) => [...prev.slice(-9), turn]); // keep last 10
+  const handleTranscript = useCallback((turn: TranscriptTurn) => {
+    setTranscript((prev) => {
+      const withoutDuplicate = prev.filter((item) =>
+        turn.turn_number > 0
+          ? item.turn_number !== turn.turn_number
+          : item.id !== turn.id
+      );
+      return [...withoutDuplicate, turn]
+        .sort((a, b) => a.turn_number - b.turn_number)
+        .slice(-20);
+    });
   }, []);
 
   const { playChunk, stop: stopPlayback, scheduleAfterPlayback, waitForDrain, cancelDrain } = useAudioPlayback();
@@ -180,6 +208,17 @@ export default function InterviewPage() {
   const stopCaptureRef = useRef<(() => void) | null>(null);
   const stopPlaybackRef = useRef<(() => void) | null>(null);
 
+  const handleTiming = useCallback((timing: { deadlineAt: string; remainingSeconds: number }) => {
+    setDeadlineAt(timing.deadlineAt);
+    setInitialRemainingSeconds(timing.remainingSeconds);
+  }, []);
+
+  const handleTakenOver = useCallback(() => {
+    stopCaptureRef.current?.();
+    stopPlaybackRef.current?.();
+    setSpeaker(null);
+  }, []);
+
   const { connect, send, sendJson, disconnect, connectionState } = useAudioWebSocket({
     sessionId: sessionId ?? 0,
     token,
@@ -188,6 +227,8 @@ export default function InterviewPage() {
     onStateChange: handleStateChange,
     onSpeakerChange: handleSpeakerChange,
     onReconnected: handleReconnected,
+    onTiming: handleTiming,
+    onTakenOver: handleTakenOver,
     onFatalError: handleFatalError,
   });
 
@@ -234,6 +275,11 @@ export default function InterviewPage() {
     setInterviewState("complete");
   }, [stopCapture, stopPlayback, sendJson, disconnect]);
 
+  const confirmTakeover = useCallback(() => {
+    setInterviewState("connecting");
+    sendJson({ type: "takeover" });
+  }, [sendJson]);
+
   const wsConnectionStatus =
     interviewState === "reconnecting"
       ? connectionLostLong ? "lost" : "reconnecting"
@@ -276,6 +322,70 @@ export default function InterviewPage() {
             </Button>
           </div>
         )}
+      </div>
+    );
+  }
+
+  if (interviewState === "resume") {
+    return (
+      <div className="max-w-xl mx-auto px-4 py-8 space-y-6">
+        <div className="text-center space-y-2">
+          <h1 className="text-xl font-semibold">Resume interview</h1>
+          <p className="text-sm text-muted-foreground">
+            Your original interview clock is still running.
+          </p>
+          {deadlineAt && (
+            <div className="flex items-center justify-center gap-2" aria-label="Interview time remaining">
+              <InterviewTimer
+                deadlineAt={deadlineAt}
+                initialRemainingSeconds={initialRemainingSeconds}
+                running={true}
+              />
+              <span className="text-sm text-muted-foreground">remaining</span>
+            </div>
+          )}
+        </div>
+
+        {transcript.length > 0 && (
+          <div className="space-y-3">
+            <p role="status" aria-live="polite" className="text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5">
+              Recent conversation restored. Previous audio will not be replayed.
+            </p>
+            <div className="space-y-2 max-h-[45vh] overflow-y-auto" aria-label="Recent interview transcript">
+              {transcript.map((turn) => (
+                <TranscriptBubble key={turn.id || turn.turn_number} speaker={turn.speaker} text={turn.text} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        <Button className="w-full" size="lg" onClick={startInterview}>
+          <Mic className="h-4 w-4 mr-2" />
+          Resume interview
+        </Button>
+      </div>
+    );
+  }
+
+  if (interviewState === "in_use") {
+    return (
+      <div role="alert" className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
+        <h2 className="text-xl font-semibold">Interview already open</h2>
+        <p className="text-sm text-muted-foreground">
+          This interview is active in another tab or device. Continuing here will stop the other connection.
+        </p>
+        <Button onClick={confirmTakeover}>Continue here</Button>
+      </div>
+    );
+  }
+
+  if (interviewState === "taken_over") {
+    return (
+      <div role="status" aria-live="assertive" className="max-w-xl mx-auto px-4 py-16 text-center space-y-4">
+        <h2 className="text-xl font-semibold">Interview continued elsewhere</h2>
+        <p className="text-sm text-muted-foreground">
+          This tab is no longer connected. Continue in the tab or device that took over the interview.
+        </p>
       </div>
     );
   }
@@ -328,14 +438,20 @@ export default function InterviewPage() {
       {/* Top bar */}
       <div className="flex items-center justify-between py-3 border-b sticky top-12 bg-white z-10">
         <span className="text-sm font-medium">AI Interview</span>
-        {candidateInfo && (
+        {candidateInfo && deadlineAt && (
           <InterviewTimer
-            totalSeconds={candidateInfo.time_limit_min * 60}
+            deadlineAt={deadlineAt}
+            initialRemainingSeconds={initialRemainingSeconds}
             running={interviewState === "active"}
-            onExpired={endInterview}
           />
         )}
       </div>
+
+      {restoredTranscript && (
+        <p role="status" aria-live="polite" className="sr-only">
+          Recent conversation restored. Previous audio was not replayed.
+        </p>
+      )}
 
       {/* Reconnecting banner */}
       {interviewState === "reconnecting" && (
@@ -388,8 +504,8 @@ export default function InterviewPage() {
             {/* Transcript */}
             {transcript.length > 0 && (
               <div className="w-full space-y-2 overflow-y-auto max-h-[60vh]">
-                {transcript.map((turn, i) => (
-                  <TranscriptBubble key={i} speaker={turn.speaker} text={turn.text} />
+                {transcript.map((turn) => (
+                  <TranscriptBubble key={turn.id || turn.turn_number} speaker={turn.speaker} text={turn.text} />
                 ))}
               </div>
             )}
