@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2026_10_24_010000) do
+ActiveRecord::Schema[7.0].define(version: 2026_10_24_020000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -107,10 +107,15 @@ ActiveRecord::Schema[7.0].define(version: 2026_10_24_010000) do
     t.text "overall_narrative"
     t.datetime "generated_at", default: -> { "now()" }
     t.bigint "tenant_id", null: false
+    t.string "source_fingerprint", limit: 64
+    t.string "requested_fingerprint", limit: 64
+    t.string "generation_status", default: "complete", null: false
+    t.text "generation_error"
     t.index ["portfolio_id", "vacancy_id"], name: "index_fit_gap_reports_on_portfolio_id_and_vacancy_id", unique: true
     t.index ["portfolio_id"], name: "index_fit_gap_reports_on_portfolio_id"
     t.index ["tenant_id"], name: "index_fit_gap_reports_on_tenant_id"
     t.index ["vacancy_id"], name: "index_fit_gap_reports_on_vacancy_id"
+    t.check_constraint "generation_status::text = ANY (ARRAY['complete'::character varying, 'generating'::character varying, 'failed'::character varying]::text[])", name: "chk_fit_gap_reports_generation_status"
   end
 
   create_table "organizations", force: :cascade do |t|
