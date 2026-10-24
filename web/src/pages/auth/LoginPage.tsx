@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { useSetAtom } from "jotai";
 import { useForm } from "react-hook-form";
 import { authAtom, saveToken } from "@/stores/authAtom";
@@ -133,13 +133,6 @@ export default function LoginPage() {
           </Button>
         </form>
 
-        {/* F-03 phase 2 AC#7: signup is a secondary action — CTA below the button. */}
-        <p className="text-center text-sm text-muted-foreground">
-          Don&apos;t have an account?{" "}
-          <Link to="/signup" className="text-primary hover:underline">
-            Sign up
-          </Link>
-        </p>
       </div>
     </div>
   );

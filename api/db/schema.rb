@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[7.0].define(version: 2026_08_17_110000) do
+ActiveRecord::Schema[7.0].define(version: 2026_10_24_010000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pgcrypto"
   enable_extension "plpgsql"
@@ -24,6 +24,23 @@ ActiveRecord::Schema[7.0].define(version: 2026_08_17_110000) do
   create_enum "generation_status", ["pending", "generating", "complete", "failed", "partial"]
   create_enum "session_status", ["pending", "active", "ended", "failed"]
   create_enum "speaker_type", ["ai", "candidate"]
+
+  create_table "administrator_invitations", id: :uuid, default: -> { "gen_random_uuid()" }, force: :cascade do |t|
+    t.bigint "tenant_id", null: false
+    t.bigint "inviter_id", null: false
+    t.string "recipient_email", limit: 255, null: false
+    t.string "token_digest", limit: 64, null: false
+    t.datetime "expires_at", null: false
+    t.datetime "accepted_at"
+    t.datetime "revoked_at"
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["tenant_id", "created_at"], name: "idx_admin_invitations_tenant_created"
+    t.index ["tenant_id", "expires_at"], name: "idx_admin_invitations_tenant_expiry"
+    t.index ["tenant_id", "recipient_email"], name: "idx_admin_invitations_tenant_email"
+    t.index ["token_digest"], name: "index_administrator_invitations_on_token_digest", unique: true
+    t.check_constraint "accepted_at IS NULL OR revoked_at IS NULL", name: "chk_admin_invitations_terminal_state"
+  end
 
   create_table "assessment_skills", force: :cascade do |t|
     t.bigint "assessment_id", null: false
@@ -214,6 +231,8 @@ ActiveRecord::Schema[7.0].define(version: 2026_08_17_110000) do
     t.check_constraint "expected_level >= 1 AND expected_level <= 5", name: "chk_vacancy_skills_expected_level"
   end
 
+  add_foreign_key "administrator_invitations", "organizations", column: "tenant_id"
+  add_foreign_key "administrator_invitations", "users", column: "inviter_id"
   add_foreign_key "assessment_skills", "assessments"
   add_foreign_key "assessor_overrides", "portfolio_skills"
   add_foreign_key "coverage_maps", "sessions"

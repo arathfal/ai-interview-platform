@@ -1,7 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 
-// jsdom lacks ResizeObserver — required by Radix UI primitives (e.g. Select,
-// used by the signup organization dropdown, F-03 phase 2).
+// jsdom lacks ResizeObserver — required by Radix UI primitives.
 class ResizeObserverStub {
   observe() {}
   unobserve() {}

@@ -15,7 +15,7 @@ This revamp was completed as a candidate applying for **Fullstack Engineer (Fron
 | Voluntary UI enhancement (branch `feat/ui-enhancement`) | **1** ✅ (see `UI-enhancement.md`) |
 | Assessment documentation consistency (docs-only PR) | **1** ✅ (PR #11 — no code change) |
 
-**Total findings audited: 28** (F-01…F-26 + E2E retest F-27, F-28, discovered 2026-08-18 during candidate E2E testing; NEW-F-01 was resolved within F-26 and F-29 is a config note, neither counted). Automated test totals at the end of the revamp: **88 RSpec examples + 62 Vitest tests, all passing** (plus `tsc --noEmit` clean).
+**Total findings audited: 28** (F-01…F-26 + E2E retest F-27, F-28, discovered 2026-08-18 during candidate E2E testing; NEW-F-01 was resolved within F-26 and F-29 is a config note, neither counted). Automated test totals after the verified F-03 administrator-onboarding follow-up: **98 RSpec examples + 61 Vitest tests, all passing** (plus TypeScript and production build checks).
 
 ## Findings — status map (join key: original finding number)
 
@@ -23,14 +23,14 @@ This revamp was completed as a candidate applying for **Fullstack Engineer (Fron
 |---|---------|----------|--------|
 | F-01 | IDOR: Portfolio / PortfolioSkill / FitGapReport accessible across tenants | P0 | ✅ Fixed — `F-01-idor-tenant-scope.md` |
 | F-02 | Audio WebSocket: any valid JWT can inject audio into a candidate session | P0 | ✅ Fixed — `F-02-audio-ws-role-check.md` |
-| F-03 | Login without explicit tenant → tenant bound to an arbitrary organization | P1 | ✅ Fixed — `F-03-login-tenant-scheme.md` |
+| F-03 | Login tenant not bound to user; administrator onboarding not authorized | P1 | ✅ Fixed — tenant-implicit login + invitation-gated administrator signup; `F-03-login-tenant-scheme.md` |
 | F-04 | `Organization.identify` falls back to default org (id 0) for unknown identifiers | P2 | ⏸ Not worked |
 | F-05 | Candidate invite link points to the backend host, not the web app | P1 | ✅ Fixed — `F-05-invite-url-frontend-host.md` |
 | F-06 | `audio_complete` ends a session without coverage verification | P1 | ✅ Fixed — `F-06-audio-complete-authorization.md` |
 | F-07 | Candidate UI shows "Interview Complete" when the interview actually failed | P1 | ✅ Fixed — `F-07-interview-error-state.md` |
 | F-08 | AI portfolio output not validated → one bad field fails the whole generation | P2 | ✅ Fixed — `F-08-ai-output-validation.md` |
 | F-09 | Fit/Gap cached report can be stale; regenerate destroys report before job success | P2 | ⏸ Not worked |
-| F-10 | Role `user` cannot log in; no signup endpoint (dead feature) | P2 | ⏸ Not worked (resolved in F-03 scope: signup hardcodes `admin`) |
+| F-10 | Role `user` cannot log in; no general role-based signup flow | P2 | ⏸ General RBAC remains out of scope; administrator onboarding is securely invitation-gated within F-03 |
 | F-11 | `DELETE /assessments/:id` returns success even when destroy fails | P2 | ⏸ Not worked |
 | F-12 | Coverage WebSocket assessor without role check | P2 | ⏸ Not worked (incidentally fixed together with F-02 via the shared `WebSocketAuth` concern) |
 | F-13 | Hardware check sends traffic to third parties without consent | P2 | ✅ Fixed — `F-13-speed-test-third-party-consent.md` |
@@ -78,7 +78,7 @@ To be explicit and honest: **not worked ≠ fixed**. These findings are valid ob
 
 | # | Finding | How it was covered |
 |---|---------|--------------------|
-| F-10 | Role `user` cannot log in; signup endpoint missing (dead feature) | Within F-03 the signup flow was built and the vestigial `user` role was removed from reachable paths — signup now creates `admin` accounts only; the dead-code radio for role selection was not revived |
+| F-10 | Role `user` cannot log in; no general role-based signup flow | Not treated as a generic RBAC fix. The verified F-03 follow-up adds administrator-only invitations with no role selector; the backend assigns `admin` after validating a tenant- and email-bound grant. Supporting other account roles remains a separate product/RBAC decision. |
 | F-12 | Coverage WebSocket assessor without role check | Fixed together with F-02: both WS middlewares now reuse the shared `WebSocketAuth` concern (same authorization source of truth as REST) |
 
 **2. Deferred pending an architectural decision (Constraint Signal CS-1 — tenancy strategy)**

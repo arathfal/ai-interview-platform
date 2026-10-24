@@ -35,20 +35,22 @@ describe("authApi.login (F-03 phase 2 — tenant-implicit)", () => {
   });
 });
 
-describe("authApi.signup (F-03 phase 2 — organization dropdown)", () => {
-  it("posts to /auth/signup with the chosen organization_id", async () => {
+describe("authApi.signup — administrator invitation redemption", () => {
+  it("posts invitation token and credentials without tenant or role authority", async () => {
     const mock = await postMock();
 
     await authApi.signup({
+      invitation_token: "invite-token",
       email: "a@b.c",
       password: "secret",
-      organization_id: 7,
     });
 
     expect(mock).toHaveBeenCalledWith("/auth/signup", {
+      invitation_token: "invite-token",
       email: "a@b.c",
       password: "secret",
-      organization_id: 7,
     });
+    expect(mock.mock.calls[0][1]).not.toHaveProperty("organization_id");
+    expect(mock.mock.calls[0][1]).not.toHaveProperty("role");
   });
 });

@@ -11,6 +11,7 @@ function renderLayout(initialPath = "/assessments") {
         <Route element={<AssessorLayout />}>
           <Route path="/assessments" element={<div>Assessments page</div>} />
           <Route path="/vacancies" element={<div>Vacancies page</div>} />
+          <Route path="/admin-invitations" element={<div>Admin invitations page</div>} />
         </Route>
       </Routes>
     </MemoryRouter>
@@ -27,6 +28,7 @@ describe("AssessorLayout — mobile drawer (UI enhancement)", () => {
     // Drawer contains the nav links (Assessments + Vacancies) and logout.
     expect(within(dialog).getByRole("link", { name: /assessments/i })).toBeInTheDocument();
     expect(within(dialog).getByRole("link", { name: /vacancies/i })).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: /admin invitations/i })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: /logout/i })).toBeInTheDocument();
   });
 
@@ -62,6 +64,7 @@ describe("AssessorLayout — mobile drawer (UI enhancement)", () => {
     renderLayout();
     expect(screen.getByRole("link", { name: "Assessments" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Vacancies" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Admin Invitations" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /logout/i })).toBeInTheDocument();
   });
 });

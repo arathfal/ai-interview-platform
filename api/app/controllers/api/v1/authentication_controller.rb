@@ -29,36 +29,26 @@ module Api
 
       # POST /api/v1/auth/signup
       #
-      # F-03 phase 2: activates signup with an organization picked from the
-      # public GET /api/v1/organizations listing. The user is created already
-      # assigned to the chosen org, so the first login is tenant-implicit.
-      #
-      # Signup always creates an 'admin' account: this platform has a single
-      # authenticated user type (assessor-capable). The 'user' role has no
-      # flow (login requires 'admin', every protected page requires assessor
-      # permissions, candidates use invite tokens without accounts) — an
-      # account created with role 'user' can log in nowhere and is a trap.
+      # Administrator signup is authorized only by a server-issued invitation.
+      # The invitation owns both tenant and recipient email. Client-supplied
+      # organization_id, tenant_id, and role values are deliberately ignored.
       def signup
-        if params[:organization_id].blank?
-          return json_error('Organization is required', :unprocessable_entity)
-        end
-
-        organization = Organization.find_by(id: params[:organization_id])
-        return json_error('Organization not found', :unprocessable_entity) if organization.nil?
-
-        user = User.new(
-          email: params[:email].to_s.downcase,
-          password: params[:password],
-          role: 'admin',
-          organization:
+        user, organization = AdministratorInvitations::Redeemer.call(
+          token: params[:invitation_token],
+          email: params[:email],
+          password: params[:password]
         )
 
-        if user.save
-          token = JsonWebToken.encode({ user_id: user.id, role: user.role, scheme: organization.scheme })
-          json_response({ token:, user: { id: user.id, email: user.email, role: user.role } }, :created)
-        else
-          json_error(user.errors.full_messages.first, :unprocessable_entity)
-        end
+        token = JsonWebToken.encode({ user_id: user.id, role: user.role, scheme: organization.scheme })
+        json_response({ token:, user: { id: user.id, email: user.email, role: user.role } }, :created)
+      rescue AdministratorInvitations::Redeemer::InvalidInvitation
+        render json: ErrorEnvelope.payload(
+          message: 'Invitation is invalid or no longer available',
+          status: :unprocessable_entity,
+          code: 'invalid_invitation'
+        ), status: :unprocessable_entity
+      rescue ActiveRecord::RecordInvalid => e
+        json_error(e.record.errors.full_messages.first, :unprocessable_entity)
       end
     end
   end

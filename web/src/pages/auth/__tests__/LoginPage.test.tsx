@@ -121,11 +121,10 @@ describe("LoginPage — tenant-implicit login (F-03 phase 2)", () => {
     expect(await screen.findByText("Account is not assigned to an organization")).toBeInTheDocument();
   });
 
-  it("shows the signup CTA below the button linking to /signup (AC#7)", () => {
+  it("does not advertise public signup from the login page", () => {
     renderLogin();
 
-    const cta = screen.getByRole("link", { name: /sign up/i });
-    expect(cta).toHaveAttribute("href", "/signup");
+    expect(screen.queryByRole("link", { name: /sign up/i })).not.toBeInTheDocument();
   });
 
   it("blocks submit and shows field errors on empty submit (RHF validation)", async () => {

@@ -14,6 +14,7 @@ import {
   LayoutDashboard,
   ClipboardList,
   Briefcase,
+  UserPlus,
   LogOut,
   Menu,
 } from "lucide-react";
@@ -22,6 +23,7 @@ import { cn } from "@/lib/utils";
 const navItems = [
   { href: "/assessments", label: "Assessments", icon: ClipboardList },
   { href: "/vacancies", label: "Vacancies", icon: Briefcase },
+  { href: "/admin-invitations", label: "Admin Invitations", icon: UserPlus },
 ];
 
 export default function AssessorLayout() {
