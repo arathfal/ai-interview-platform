@@ -15,22 +15,42 @@ RSpec.describe Portfolios::Generator do
   end
 
   let(:assessment) do
-    Assessment.create!(
+    record = Assessment.create!(
       name: 'React Developer',
       tenant_id: org.id,
       created_by: 1,
       time_limit_min: 30
     )
+    record.assessment_skills.create!(
+      skill_id: 'react',
+      skill_label: 'React',
+      l1_anchor: 'L1',
+      l2_anchor: 'L2',
+      l3_anchor: 'L3',
+      l4_anchor: 'L4',
+      l5_anchor: 'L5',
+      expected_level: 3,
+      display_order: 0
+    )
+    record
   end
 
   let(:session) do
-    Session.create!(
+    record = Session.create!(
       assessment_id: assessment.id,
       tenant_id: org.id,
       candidate_id: 'cand-pgen',
       candidate_name: 'Candidate PG',
       status: 'ended'
     )
+    record.coverage_maps.create!(
+      skill_id: 'react',
+      skill_label: 'React',
+      state: 'covered',
+      probe_count: 3,
+      is_discovered: false
+    )
+    record
   end
 
   let(:gemini_client) { double('Gemini::HttpClient') }
@@ -72,6 +92,56 @@ RSpec.describe Portfolios::Generator do
           expect(portfolio.portfolio_skills.count).to eq(3)
           expect(portfolio.portfolio_skills.pluck(:ai_level)).to all(be_between(1, 5))
         end
+      end
+
+      it 'clears an earlier generation error after a successful retry' do
+        in_tenant do
+          session.create_portfolio!(generation_status: 'failed', generation_error: 'API returned 503')
+        end
+
+        portfolio = run_generator!(
+          'configured_skills' => [skill('React')],
+          'discovered_skills' => []
+        )
+
+        expect(portfolio.generation_status).to eq('complete')
+        expect(portfolio.generation_error).to be_nil
+      end
+    end
+
+    context 'invalid source data' do
+      it 'fails without calling Gemini when the assessment has no skills' do
+        assessment.assessment_skills.destroy_all
+        expect(gemini_client).not_to receive(:generate_content)
+
+        portfolio = in_tenant { generator.call }
+
+        expect(portfolio.generation_status).to eq('failed')
+        expect(portfolio.generation_error).to eq('Assessment has no skills to evaluate')
+      end
+
+      it 'fails without calling Gemini when the session has no coverage map' do
+        session.coverage_maps.destroy_all
+        expect(gemini_client).not_to receive(:generate_content)
+
+        portfolio = in_tenant { generator.call }
+
+        expect(portfolio.generation_status).to eq('failed')
+        expect(portfolio.generation_error).to eq('Session has no skill coverage to evaluate')
+      end
+    end
+
+    context 'empty AI output' do
+      it 'raises a retriable error instead of reporting an empty validation message' do
+        expect do
+          run_generator!(
+            'configured_skills' => [],
+            'discovered_skills' => []
+          )
+        end.to raise_error(Portfolios::Generator::EmptyAiOutputError, 'AI returned no skill assessments')
+
+        expect(session.portfolio.reload.generation_status).to eq('failed')
+        expect(session.portfolio.generation_error).to eq('AI returned no skill assessments')
       end
     end
 

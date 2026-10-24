@@ -22,6 +22,10 @@ module Api
       def create
         assessment = Assessment.find(params[:assessment_id])
 
+        if assessment.assessment_skills.empty?
+          return json_error("Assessment must include at least one skill before inviting a candidate", :unprocessable_entity)
+        end
+
         session = assessment.sessions.new(
           candidate_id:   params.dig(:session, :candidate_id),
           candidate_name: params.dig(:session, :candidate_name).presence,

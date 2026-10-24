@@ -5,6 +5,11 @@ module Portfolios
   # and final coverage map using Gemini Pro.
   # Runs post-session as a background job.
   class Generator
+    class EmptyAiOutputError < StandardError; end
+
+    NO_ASSESSMENT_SKILLS_ERROR = 'Assessment has no skills to evaluate'.freeze
+    NO_COVERAGE_ERROR = 'Session has no skill coverage to evaluate'.freeze
+
     def initialize(session:, gemini_client: nil)
       @session = session
       @gemini_client = gemini_client || Gemini::HttpClient.new(
@@ -20,7 +25,13 @@ module Portfolios
         generation_status: 'pending'
       )
 
-      portfolio.update!(generation_status: 'generating')
+      if (input_error = generation_input_error)
+        portfolio.update!(generation_status: 'failed', generation_error: input_error)
+        Rails.logger.error("[N10] Portfolio generation skipped for session #{@session.id}: #{input_error}")
+        return portfolio
+      end
+
+      portfolio.update!(generation_status: 'generating', generation_error: nil)
 
       prompt   = build_prompt
       response = @gemini_client.generate_content(prompt, temperature: 0.2)
@@ -28,7 +39,7 @@ module Portfolios
       outcome = save_skills(portfolio, response)
 
       if outcome[:saved].positive? && outcome[:failed].zero?
-        portfolio.update!(generation_status: 'complete', generated_at: Time.current)
+        portfolio.update!(generation_status: 'complete', generated_at: Time.current, generation_error: nil)
         Rails.logger.info("[N10] Portfolio generated for session #{@session.id}")
       elsif outcome[:saved].positive?
         # Best-effort partial save: keep the valid skills, surface what was lost.
@@ -56,6 +67,13 @@ module Portfolios
     end
 
     private
+
+    def generation_input_error
+      return NO_ASSESSMENT_SKILLS_ERROR unless @session.assessment.assessment_skills.exists?
+      return NO_COVERAGE_ERROR unless @session.coverage_maps.exists?
+
+      nil
+    end
 
     def build_prompt
       assessment       = @session.assessment
@@ -171,6 +189,11 @@ module Portfolios
     # so the caller can decide the final generation_status.
     def save_skills(portfolio, response)
       data = response.is_a?(Hash) ? response : JSON.parse(response)
+      skill_attrs = build_skill_attrs(data)
+
+      if skill_attrs.empty?
+        raise EmptyAiOutputError, 'AI returned no skill assessments'
+      end
 
       # Destroy existing skills (idempotent regeneration)
       portfolio.portfolio_skills.destroy_all
@@ -178,7 +201,7 @@ module Portfolios
       saved  = 0
       errors = []
 
-      build_skill_attrs(data).each do |attrs|
+      skill_attrs.each do |attrs|
         portfolio.portfolio_skills.create!(attrs)
         saved += 1
       rescue ActiveRecord::ActiveRecordError => e

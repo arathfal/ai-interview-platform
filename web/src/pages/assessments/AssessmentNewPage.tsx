@@ -21,11 +21,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
+import { Alert } from "@/components/ui/alert";
 import SkillCard from "@/components/assessment/SkillCard";
 import SkillPicker from "@/components/assessment/SkillPicker";
 import { ArrowLeft, Plus, Loader2 } from "lucide-react";
 import { assessmentsApi } from "@/services/assessments";
 import { extractApiError } from "@/lib/apiErrors";
+import { cn } from "@/lib/utils";
 import { TIME_LIMIT_OPTIONS } from "@/utils/constants";
 import type { AssessmentSkill } from "@/types";
 
@@ -41,6 +43,7 @@ export default function AssessmentNewPage() {
   const [submitting, setSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
 
   const form = useForm<AssessmentFormValues>({
     defaultValues: {
@@ -69,6 +72,7 @@ export default function AssessmentNewPage() {
   };
 
   const addCustomSkill = () => {
+    setSkillsError(null);
     append({
       skill_label: "",
       is_custom: true,
@@ -78,14 +82,16 @@ export default function AssessmentNewPage() {
   };
 
   const addB7Skill = (skill: Partial<AssessmentSkill>) => {
+    setSkillsError(null);
     append({ ...skill, display_order: fields.length });
   };
 
   const onSubmit = async (data: AssessmentFormValues) => {
     if (data.skills.length === 0) {
-      setError("Add at least one skill to continue.");
+      setSkillsError("Add at least one skill before creating the assessment.");
       return;
     }
+    setSkillsError(null);
     setError(null);
     setSubmitting(true);
     try {
@@ -107,6 +113,12 @@ export default function AssessmentNewPage() {
     }
   };
 
+  const onInvalidSubmit = () => {
+    if (fields.length === 0) {
+      setSkillsError("Add at least one skill before creating the assessment.");
+    }
+  };
+
   return (
     <div className="max-w-2xl mx-auto">
       {/* Breadcrumb */}
@@ -119,7 +131,7 @@ export default function AssessmentNewPage() {
         <span className="text-sm font-medium">New Assessment</span>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      <form onSubmit={handleSubmit(onSubmit, onInvalidSubmit)} className="space-y-6">
         {/* Role title */}
         <div className="space-y-1.5">
           <Label htmlFor="name">
@@ -177,13 +189,26 @@ export default function AssessmentNewPage() {
         <Separator />
 
         {/* Skills section */}
-        <div className="space-y-3">
-          <Label>Skills to assess</Label>
+        <div
+          className="space-y-3"
+          role="group"
+          aria-labelledby="skills-label"
+          aria-describedby={skillsError ? "skills-error" : undefined}
+          aria-invalid={skillsError ? true : undefined}
+        >
+          <Label id="skills-label">
+            Skills to assess <span className="text-destructive">*</span>
+          </Label>
 
           {fields.length === 0 ? (
-            <div className="border rounded-lg p-6 text-center text-sm text-muted-foreground">
+            <div
+              className={cn(
+                "rounded-lg border p-6 text-center text-sm text-muted-foreground transition-colors",
+                skillsError && "border-destructive bg-destructive/5"
+              )}
+            >
               <p className="mb-1">No skills added yet.</p>
-              <p>Add at least one skill to continue.</p>
+              <p>Choose a skill from the taxonomy or add a custom skill.</p>
             </div>
           ) : (
             <DndContext
@@ -230,6 +255,12 @@ export default function AssessmentNewPage() {
               Add custom skill
             </Button>
           </div>
+
+          {skillsError && (
+            <Alert id="skills-error" className="py-2.5">
+              <p>{skillsError}</p>
+            </Alert>
+          )}
         </div>
 
         <Separator />
