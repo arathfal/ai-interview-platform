@@ -60,13 +60,17 @@ export default function ComparisonTable({ comparisons }: ComparisonTableProps) {
               <tr key={i} className="border-b last:border-0">
                 <td className="px-4 py-2.5">{c.skill_label}</td>
                 <td className="px-4 py-2.5 text-center text-muted-foreground">
-                  {LEVEL_LABELS[c.required_level]}
+                  {LEVEL_LABELS[c.expected_level] || "—"}
                 </td>
                 <td className="px-4 py-2.5 text-center">
                   {c.candidate_level != null ? (
-                    <span>
-                      {LEVEL_LABELS[c.candidate_level]}
-                      {c.is_override && <span className="text-xs text-muted-foreground ml-1">✏</span>}
+                    <span className="inline-flex flex-col items-center">
+                      <span>{LEVEL_LABELS[c.candidate_level]}</span>
+                      <span className="text-xs text-muted-foreground">
+                        {c.rating_source === "assessor_override" && c.ai_level != null
+                          ? `Assessor-adjusted from ${LEVEL_LABELS[c.ai_level]}`
+                          : "AI rating"}
+                      </span>
                     </span>
                   ) : (
                     <span className="text-muted-foreground">—</span>
@@ -86,7 +90,6 @@ export default function ComparisonTable({ comparisons }: ComparisonTableProps) {
         {matchCount > 0 && <span>✅ Match: {matchCount} skill{matchCount !== 1 ? "s" : ""}</span>}
         {gapCount > 0 && <span>⚠ Gap: {gapCount} skill{gapCount !== 1 ? "s" : ""}</span>}
         {exceedCount > 0 && <span>⭐ Exceeds: {exceedCount} skill{exceedCount !== 1 ? "s" : ""}</span>}
-        <span className="ml-auto">✏ = human override applied</span>
       </div>
     </div>
   );

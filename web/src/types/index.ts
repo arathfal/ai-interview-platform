@@ -81,6 +81,7 @@ export interface Portfolio {
   generation_status: "pending" | "generating" | "complete" | "failed" | "partial";
   generated_at?: string;
   generation_error?: string;
+  failure_reason?: "missing_assessment_skills" | "missing_coverage" | "generation_failed";
   skills: PortfolioSkill[];
   overrides: AssessorOverride[];
 }
@@ -128,22 +129,31 @@ export interface VacancySkill {
 export type SkillComparisonResult = "match" | "gap" | "exceed" | "not_assessed";
 
 export interface SkillComparison {
+  skill_id?: string | null;
   skill_label: string;
-  required_level: number;
-  candidate_level?: number;
+  expected_level: number;
+  candidate_level?: number | null;
+  ai_level?: number | null;
+  rating_source?: "ai" | "assessor_override" | null;
   result: SkillComparisonResult;
-  delta?: number;
-  is_override?: boolean;
+  delta?: number | null;
+  confidence?: "high" | "medium" | "low" | null;
 }
+
+export type FitGapFreshness = "current" | "updating" | "outdated" | "failed";
 
 export interface FitGapReport {
   id: number;
   portfolio_id: number;
   vacancy_id: number;
   skill_comparisons: SkillComparison[];
-  culture_narrative: string;
-  overall_narrative: string;
-  generated_at: string;
+  culture_narrative?: string | null;
+  overall_narrative?: string | null;
+  generated_at?: string | null;
+  generation_status: "complete" | "generating" | "failed";
+  generation_error?: string | null;
+  freshness: FitGapFreshness;
+  has_completed_report: boolean;
 }
 
 export interface SkillTaxonomy {

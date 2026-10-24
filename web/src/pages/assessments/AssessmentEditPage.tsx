@@ -23,6 +23,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { extractApiError } from "@/lib/apiErrors";
+import { cn } from "@/lib/utils";
 import SkillCard from "@/components/assessment/SkillCard";
 import SkillPicker from "@/components/assessment/SkillPicker";
 import { ArrowLeft, Plus, Loader2, RefreshCw } from "lucide-react";
@@ -38,6 +39,7 @@ export default function AssessmentEditPage() {
   const [submitting, setSubmitting] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const form = useForm<AssessmentFormValues>({
@@ -53,6 +55,7 @@ export default function AssessmentEditPage() {
       const res = await assessmentsApi.get(Number(id));
       const a = res.data.assessment;
       reset({ name: a.name, time_limit_min: a.time_limit_min, skills: a.skills });
+      setSkillsError(null);
     } catch (e) {
       // F-26: no silent catch — a failed load shows a banner with retry.
       setLoadError(extractApiError(e).message);
@@ -80,7 +83,11 @@ export default function AssessmentEditPage() {
   };
 
   const onSubmit = async (data: AssessmentFormValues) => {
-    if (data.skills.length === 0) { setError("Add at least one skill."); return; }
+    if (data.skills.length === 0) {
+      setSkillsError("Add at least one skill before saving the assessment.");
+      return;
+    }
+    setSkillsError(null);
     setError(null);
     setSubmitting(true);
     try {
@@ -94,6 +101,12 @@ export default function AssessmentEditPage() {
       setError(extractApiError(e).message);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const onInvalidSubmit = () => {
+    if (fields.length === 0) {
+      setSkillsError("Add at least one skill before saving the assessment.");
     }
   };
 
@@ -119,7 +132,7 @@ export default function AssessmentEditPage() {
         <span className="text-sm font-medium">Edit Assessment</span>
       </div>
 
-      <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
+      <form onSubmit={handleSubmit(onSubmit, onInvalidSubmit)} className="space-y-6">
         {loadError && (
           <Alert>
             <div className="flex items-center justify-between gap-3">
@@ -160,11 +173,25 @@ export default function AssessmentEditPage() {
 
         <Separator />
 
-        <div className="space-y-3">
-          <Label>Skills to assess</Label>
+        <div
+          className="space-y-3"
+          role="group"
+          aria-labelledby="skills-label"
+          aria-describedby={skillsError ? "skills-error" : undefined}
+          aria-invalid={skillsError ? true : undefined}
+        >
+          <Label id="skills-label">
+            Skills to assess <span className="text-destructive">*</span>
+          </Label>
           {fields.length === 0 ? (
-            <div className="border rounded-lg p-6 text-center text-sm text-muted-foreground">
-              No skills added yet.
+            <div
+              className={cn(
+                "rounded-lg border p-6 text-center text-sm text-muted-foreground transition-colors",
+                skillsError && "border-destructive bg-destructive/5"
+              )}
+            >
+              <p className="mb-1">No skills added yet.</p>
+              <p>Choose a skill from the taxonomy or add a custom skill.</p>
             </div>
           ) : (
             <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
@@ -181,10 +208,24 @@ export default function AssessmentEditPage() {
             <Button type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)}>
               <Plus className="h-3.5 w-3.5 mr-1" /> Add from B7 taxonomy
             </Button>
-            <Button type="button" variant="outline" size="sm" onClick={() => append({ skill_label: "", is_custom: true, expected_level: 3, display_order: fields.length })}>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setSkillsError(null);
+                append({ skill_label: "", is_custom: true, expected_level: 3, display_order: fields.length });
+              }}
+            >
               <Plus className="h-3.5 w-3.5 mr-1" /> Add custom skill
             </Button>
           </div>
+
+          {skillsError && (
+            <Alert id="skills-error" className="py-2.5">
+              <p>{skillsError}</p>
+            </Alert>
+          )}
         </div>
 
         <Separator />
@@ -203,7 +244,14 @@ export default function AssessmentEditPage() {
         </div>
       </form>
 
-      <SkillPicker open={pickerOpen} onOpenChange={setPickerOpen} onSelect={(s) => append({ ...s, display_order: fields.length })} />
+      <SkillPicker
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={(skill) => {
+          setSkillsError(null);
+          append({ ...skill, display_order: fields.length });
+        }}
+      />
     </div>
   );
 }
