@@ -57,9 +57,16 @@ module Api
           return json_error("Portfolio is not ready for export (status: #{@portfolio.generation_status})", :unprocessable_entity)
         end
 
+        vacancy, report, stale_export = fit_gap_export_context
+        return if performed?
+
         if format == "pdf"
-          vacancy = params[:vacancy_id].present? ? Vacancy.find_by(id: params[:vacancy_id]) : nil
-          pdf_data = Exports::PdfGenerator.new(portfolio: @portfolio, vacancy: vacancy).call
+          pdf_data = Exports::PdfGenerator.new(
+            portfolio: @portfolio,
+            vacancy:,
+            fit_gap_report: report,
+            stale: stale_export
+          ).call
 
           return send_data pdf_data,
                            filename:    "portfolio-#{@portfolio.id}.pdf",
@@ -68,8 +75,7 @@ module Api
         end
 
         # JSON export
-        vacancy_id = params[:vacancy_id]
-        export_data = build_export_json(@portfolio, vacancy_id)
+        export_data = build_export_json(@portfolio, report:, stale_export:)
 
         send_data export_data.to_json,
                   filename:    "portfolio-#{@portfolio.id}.json",
@@ -91,10 +97,13 @@ module Api
           return json_error("Portfolio is not ready (status: #{portfolio.generation_status})", :unprocessable_entity)
         end
 
-        FitGapReport.find_by(portfolio_id: portfolio.id, vacancy_id: vacancy.id)&.destroy
-        FitGapGeneratorWorker.perform_async(portfolio.id, vacancy.id)
+        report = FitGap::RegenerationCoordinator.request!(portfolio:, vacancy:, force: true)
 
-        render json: { status: "generating", message: "Fit/gap report regeneration queued" }, status: :accepted
+        render json: {
+          status: "generating",
+          message: "Fit/gap report regeneration queued",
+          report: fit_gap_json(report)
+        }, status: :accepted
       rescue ActiveRecord::RecordNotFound
         json_error("Portfolio not found", :not_found)
       end
@@ -113,14 +122,17 @@ module Api
           return json_error("Portfolio is not ready (status: #{portfolio.generation_status})", :unprocessable_entity)
         end
 
-        # Return cached report if it exists and portfolio has no new overrides
         existing = FitGapReport.find_by(portfolio_id: portfolio.id, vacancy_id: vacancy.id)
-        if existing
+        if existing&.freshness == 'current'
           return json_response(report: fit_gap_json(existing))
         end
 
-        FitGapGeneratorWorker.perform_async(portfolio.id, vacancy.id)
-        render json: { status: "generating", message: "Fit/gap report generation queued" }, status: :accepted
+        report = FitGap::RegenerationCoordinator.request!(portfolio:, vacancy:)
+        render json: {
+          status: "generating",
+          message: "Fit/gap report generation queued",
+          report: fit_gap_json(report)
+        }, status: :accepted
       rescue ActiveRecord::RecordNotFound
         json_error("Portfolio not found", :not_found)
       end
@@ -208,6 +220,7 @@ module Api
       end
 
       def fit_gap_json(report)
+        freshness = report.freshness
         {
           id:                report.id,
           portfolio_id:      report.portfolio_id,
@@ -215,22 +228,53 @@ module Api
           skill_comparisons: report.skill_comparisons,
           culture_narrative: report.culture_narrative,
           overall_narrative: report.overall_narrative,
-          generated_at:      report.generated_at
+          generated_at:      report.generated_at,
+          generation_status: report.generation_status,
+          generation_error:  report.generation_error,
+          freshness:          freshness,
+          has_completed_report: report.completed_payload?
         }
       end
 
-      def build_export_json(portfolio, vacancy_id = nil)
+      def build_export_json(portfolio, report: nil, stale_export: false)
         data = {
           exported_at: Time.current.iso8601,
-          portfolio:   portfolio_json(portfolio)
+          portfolio:   portfolio_json(portfolio),
+          stale_export: stale_export
         }
 
-        if vacancy_id.present?
-          report = FitGapReport.find_by(portfolio_id: portfolio.id, vacancy_id: vacancy_id)
-          data[:fit_gap_report] = report ? fit_gap_json(report) : nil
-        end
+        data[:fit_gap_report] = fit_gap_json(report).merge(stale_export:) if report
 
         data
+      end
+
+      def fit_gap_export_context
+        return [nil, nil, false] if params[:vacancy_id].blank?
+
+        vacancy = Vacancy.find_by(id: params[:vacancy_id])
+        unless vacancy
+          json_error("Vacancy not found", :not_found)
+          return [nil, nil, false]
+        end
+
+        report = FitGapReport.find_by(portfolio_id: @portfolio.id, vacancy_id: vacancy.id)
+        unless report&.completed_payload?
+          json_error("Fit/gap report is not ready for export", :conflict)
+          return [vacancy, report, false]
+        end
+
+        freshness = report.freshness
+        return [vacancy, report, false] if freshness == 'current'
+
+        allow_stale = ActiveModel::Type::Boolean.new.cast(params[:allow_stale])
+        return [vacancy, report, true] if freshness == 'failed' && allow_stale
+
+        json_error(
+          "Fit/gap report is #{freshness} and cannot be exported as current",
+          :conflict,
+          details: { freshness:, stale_export_allowed: freshness == 'failed' }
+        )
+        [vacancy, report, false]
       end
     end
   end
