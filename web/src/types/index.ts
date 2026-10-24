@@ -174,6 +174,11 @@ export interface CandidateInfo {
   role_title: string;
   time_limit_min: number;
   session_status: string;
+  deadline_at?: string | null;
+  remaining_seconds?: number | null;
+  resume_available?: boolean;
+  recovery_message?: string | null;
+  recent_transcript?: TranscriptTurn[];
 }
 
 export interface PaginationMeta {
@@ -205,15 +210,23 @@ export interface NormalizedApiError {
 // WebSocket message types
 export type InterviewState =
   | "idle"
+  | "resume"
   | "connecting"
   | "active"
+  | "in_use"
+  | "taken_over"
   | "reconnecting"
   | "draining_audio"
   | "ending"
   | "complete"
   | "error";
 
-export type InterviewErrorKind = "load_failed" | "auth_failed" | "ws_unrecoverable" | "ws_connection_lost";
+export type InterviewErrorKind =
+  | "load_failed"
+  | "auth_failed"
+  | "resume_unavailable"
+  | "ws_unrecoverable"
+  | "ws_connection_lost";
 
 export interface InterviewErrorInfo {
   kind: InterviewErrorKind;
@@ -236,6 +249,8 @@ export interface WsControlMessage {
     | "reconnected"
     | "speaker_changed"
     | "preparing_to_end"
+    | "session_in_use"
+    | "session_taken_over"
     | "error";
   speaker?: "candidate" | "ai";
   role?: "candidate" | "ai";
@@ -244,4 +259,9 @@ export interface WsControlMessage {
   code?: string;
   message?: string;
   recoverable?: boolean;
+  session_id?: number;
+  turn_id?: number;
+  turn_number?: number;
+  deadline_at?: string;
+  remaining_seconds?: number;
 }

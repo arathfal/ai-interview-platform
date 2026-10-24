@@ -34,6 +34,12 @@ export default function InterviewError({ error, onRetry }: InterviewErrorProps) 
       body =
         "The link may be incorrect or expired. Please contact the interviewer or hiring team to get a new one.";
       break;
+    case "resume_unavailable":
+      title = "Interview context couldn't be restored";
+      body =
+        error.message ??
+        "The prior conversation context is unavailable. Please contact the interviewer before continuing.";
+      break;
     case "ws_unrecoverable":
       if (code === "no_system_prompt") {
         title = "Interview isn't ready yet";

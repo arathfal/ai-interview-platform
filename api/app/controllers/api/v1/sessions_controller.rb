@@ -156,11 +156,34 @@ module Api
           return json_error("Assessment not found", :not_found)
         end
 
+        deadline = if session.started_at
+                     session.started_at + assessment.time_limit_min.minutes
+                   end
+        recent_turns = if session.active?
+                         session.transcript_turns.order(turn_number: :desc).limit(20).to_a.reverse
+                       else
+                         []
+                       end
+        resume_available = !session.active? || session.gemini_resumption_token.present?
+
         json_response(
           session_id:      session.id,
           role_title:      assessment.name,
           time_limit_min:  assessment.time_limit_min,
-          session_status:  session.status
+          session_status:  session.status,
+          deadline_at:     deadline&.iso8601,
+          remaining_seconds: deadline ? [(deadline - Time.current).ceil, 0].max : nil,
+          resume_available: resume_available,
+          recovery_message: resume_available ? nil : 'The prior AI conversation context is unavailable.',
+          recent_transcript: recent_turns.map do |turn|
+            {
+              id: turn.id,
+              turn_number: turn.turn_number,
+              speaker: turn.speaker,
+              text: turn.text,
+              created_at: turn.created_at
+            }
+          end
         )
       end
 
