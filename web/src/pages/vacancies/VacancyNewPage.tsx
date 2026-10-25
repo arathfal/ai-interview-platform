@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useFieldArray } from "react-hook-form";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
@@ -12,6 +13,7 @@ import { vacanciesApi } from "@/services/vacancies";
 import { extractApiError } from "@/lib/apiErrors";
 import { ArrowLeft, Plus, X, Loader2 } from "lucide-react";
 import type { VacancySkill } from "@/types";
+import { vacancyKeys } from "@/lib/queryKeys";
 
 interface VacancyFormValues {
   role_title: string;
@@ -22,9 +24,13 @@ interface VacancyFormValues {
 
 export default function VacancyNewPage() {
   const navigate = useNavigate();
-  const [submitting, setSubmitting] = useState(false);
+  const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const createMutation = useMutation({
+    mutationFn: vacanciesApi.create,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: vacancyKeys.lists() }),
+  });
 
   const { register, handleSubmit, control, setValue, watch, formState: { errors } } = useForm<VacancyFormValues>({
     defaultValues: { role_title: "", culture_dimensions: "", competency_expectations: "", skills: [] },
@@ -34,19 +40,16 @@ export default function VacancyNewPage() {
 
   const onSubmit = async (data: VacancyFormValues) => {
     setError(null);
-    setSubmitting(true);
     try {
-      await vacanciesApi.create({
+      await createMutation.mutateAsync({
         role_title: data.role_title,
         culture_dimensions: data.culture_dimensions,
         competency_expectations: data.competency_expectations,
         vacancy_skills_attributes: data.skills,
       });
       navigate("/vacancies");
-    } catch (e: any) {
+    } catch (e) {
       setError(extractApiError(e).message);
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -130,8 +133,8 @@ export default function VacancyNewPage() {
 
         <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
           <Button type="button" variant="outline" onClick={() => navigate("/vacancies")}>Cancel</Button>
-          <Button type="submit" disabled={submitting}>
-            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          <Button type="submit" disabled={createMutation.isPending}>
+            {createMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Save Vacancy
           </Button>
         </div>

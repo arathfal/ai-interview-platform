@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,8 +7,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { assessmentsApi } from "@/services/assessments";
+import { assessmentKeys } from "@/lib/queryKeys";
 import { Plus, Clock, ChevronRight } from "lucide-react";
-import type { Assessment, PaginationMeta } from "@/types";
+import type { Assessment } from "@/types";
 
 function normalizedPage(value: string | null) {
   if (value === null) return 1;
@@ -43,15 +45,22 @@ export default function AssessmentListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawPage = searchParams.get("page");
   const page = normalizedPage(rawPage);
-  const [assessments, setAssessments] = useState<Assessment[]>([]);
-  const [meta, setMeta] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [requestVersion, setRequestVersion] = useState(0);
-  const latestRequestRef = useRef(0);
   const focusPageRef = useRef<number | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const {
+    data,
+    isPending,
+    isFetching,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: assessmentKeys.list(page),
+    queryFn: async () => (await assessmentsApi.list({ page })).data,
+    placeholderData: keepPreviousData,
+  });
+  const assessments = data?.assessments ?? [];
+  const meta = data?.meta ?? null;
 
   useEffect(() => {
     if (rawPage !== null && rawPage !== String(page)) {
@@ -64,47 +73,26 @@ export default function AssessmentListPage() {
   }, [page, rawPage, setSearchParams]);
 
   useEffect(() => {
-    const requestId = ++latestRequestRef.current;
-    let redirected = false;
-    setLoading(true);
-    setError(false);
+    if (!meta || isFetching) return;
 
-    assessmentsApi
-      .list({ page })
-      .then((res) => {
-        if (requestId !== latestRequestRef.current) return;
+    const lastPage = Math.max(meta.total_pages, 1);
+    if (page > lastPage) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("page", String(lastPage));
+        return next;
+      }, { replace: true });
+      return;
+    }
 
-        const nextMeta = res.data.meta;
-        if (page > Math.max(nextMeta.total_pages, 1)) {
-          redirected = true;
-          setSearchParams((current) => {
-            const next = new URLSearchParams(current);
-            next.set("page", String(Math.max(nextMeta.total_pages, 1)));
-            return next;
-          }, { replace: true });
-          return;
-        }
-
-        setAssessments(res.data.assessments);
-        setMeta(nextMeta);
-
-        if (focusPageRef.current === page) {
-          focusPageRef.current = null;
-          requestAnimationFrame(() => {
-            resultsRef.current?.scrollIntoView({ block: "start" });
-            resultsRef.current?.focus({ preventScroll: true });
-          });
-        }
-      })
-      .catch(() => {
-        if (requestId === latestRequestRef.current) setError(true);
-      })
-      .finally(() => {
-        if (requestId === latestRequestRef.current && !redirected) setLoading(false);
+    if (focusPageRef.current === page) {
+      focusPageRef.current = null;
+      requestAnimationFrame(() => {
+        resultsRef.current?.scrollIntoView({ block: "start" });
+        resultsRef.current?.focus({ preventScroll: true });
       });
-  }, [page, requestVersion]);
-
-  const retry = useCallback(() => setRequestVersion((version) => version + 1), []);
+    }
+  }, [isFetching, meta, page, setSearchParams]);
 
   const changePage = (nextPage: number) => {
     focusPageRef.current = nextPage;
@@ -115,7 +103,7 @@ export default function AssessmentListPage() {
     });
   };
 
-  const initialLoading = loading && meta === null;
+  const initialLoading = isPending;
   const hasAssessments = assessments.length > 0;
 
   return (
@@ -127,10 +115,10 @@ export default function AssessmentListPage() {
         </Button>
       </div>
 
-      {error ? (
+      {isError ? (
         <Alert>
           <p className="text-sm">Failed to load assessments.</p>
-          <Button className="mt-2" variant="outline" size="sm" onClick={retry}>
+          <Button className="mt-2" variant="outline" size="sm" onClick={() => void refetch()}>
             Try Again
           </Button>
         </Alert>
@@ -154,7 +142,7 @@ export default function AssessmentListPage() {
           tabIndex={-1}
           aria-label={`Assessment results, page ${meta?.current_page ?? page}`}
         >
-          <div className="space-y-2" aria-busy={loading}>
+          <div className="space-y-2" aria-busy={isFetching}>
             {assessments.map((a) => (
               <Link
                 key={a.id}
@@ -197,7 +185,7 @@ export default function AssessmentListPage() {
               totalCount={meta.total_count}
               pageSize={meta.per_page}
               onPageChange={changePage}
-              loading={loading}
+              loading={isFetching}
               ariaLabel="Assessment list pagination"
             />
           )}

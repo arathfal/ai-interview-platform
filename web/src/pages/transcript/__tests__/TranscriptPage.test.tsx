@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import TranscriptPage from "@/pages/transcript/TranscriptPage";
 import { sessionsApi } from "@/services/sessions";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
 
 vi.mock("@/services/sessions", () => ({
   sessionsApi: { getTranscript: vi.fn(), get: vi.fn() },
@@ -14,7 +15,7 @@ const turns = [
 ];
 
 function renderPage(entry: string) {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route path="/assessments/:id/sessions/:sessionId/transcript" element={<TranscriptPage />} />

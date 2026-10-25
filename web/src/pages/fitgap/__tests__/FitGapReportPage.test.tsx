@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -6,8 +6,9 @@ import FitGapReportPage from "@/pages/fitgap/FitGapReportPage";
 import { portfoliosApi } from "@/services/portfolios";
 import { sessionsApi } from "@/services/sessions";
 import { vacanciesApi } from "@/services/vacancies";
-import { usePolling } from "@/hooks/usePolling";
 import type { FitGapReport } from "@/types";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
+import { portfolioKeys } from "@/lib/queryKeys";
 
 vi.mock("@/services/sessions", () => ({
   sessionsApi: { getPortfolio: vi.fn(), get: vi.fn() },
@@ -24,10 +25,6 @@ vi.mock("@/services/portfolios", () => ({
     regenerateFitGap: vi.fn(),
     exportPortfolio: vi.fn(),
   },
-}));
-
-vi.mock("@/hooks/usePolling", () => ({
-  usePolling: vi.fn(),
 }));
 
 const portfolio = {
@@ -69,10 +66,8 @@ const getSessionMock = sessionsApi.get as ReturnType<typeof vi.fn>;
 const getVacancyMock = vacanciesApi.get as ReturnType<typeof vi.fn>;
 const getFitGapMock = portfoliosApi.getFitGap as ReturnType<typeof vi.fn>;
 const exportPortfolioMock = portfoliosApi.exportPortfolio as ReturnType<typeof vi.fn>;
-const usePollingMock = usePolling as ReturnType<typeof vi.fn>;
-
 function renderPage() {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={["/assessments/17/sessions/29/portfolio/fit-gap/4"]}>
       <Routes>
         <Route
@@ -80,7 +75,7 @@ function renderPage() {
           element={<FitGapReportPage />}
         />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   );
 }
 
@@ -140,7 +135,7 @@ describe("FitGapReportPage freshness", () => {
     renderPage();
 
     expect(await screen.findByText("Musa · Senior Frontend Engineer")).toBeInTheDocument();
-    expect(screen.getByLabelText("Role fit estimate: 50")).toHaveTextContent("50%");
+    expect(await screen.findByLabelText("Role fit estimate: 50")).toHaveTextContent("50%");
     expect(screen.getByLabelText("Meets or exceeds: 1")).toBeInTheDocument();
     expect(screen.getByLabelText("Skill gaps: 1")).toHaveTextContent("1 not assessed");
     expect(screen.getByText(/not a hiring decision/i)).toBeInTheDocument();
@@ -157,7 +152,6 @@ describe("FitGapReportPage freshness", () => {
     expect(screen.getByText("Previous result")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "PDF" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "JSON" })).toBeDisabled();
-    expect(usePollingMock).toHaveBeenCalledWith(expect.any(Function), 5000, true);
   });
 
   it("refreshes immediately when the page regains focus", async () => {
@@ -173,14 +167,16 @@ describe("FitGapReportPage freshness", () => {
 
   it("pauses polling while the page is hidden", async () => {
     getFitGapMock.mockResolvedValue({ data: { report } });
-    const visibility = vi.spyOn(document, "visibilityState", "get");
-    visibility.mockReturnValue("hidden");
-
-    renderPage();
+    const { client } = renderPage();
     await screen.findByText("Current");
 
-    expect(usePollingMock).toHaveBeenLastCalledWith(expect.any(Function), 5000, false);
-    visibility.mockRestore();
+    const query = client.getQueryCache().find({ queryKey: portfolioKeys.fitGap(25, 4) });
+    const polling = query?.options as {
+      refetchInterval: number;
+      refetchIntervalInBackground: boolean;
+    };
+    expect(polling.refetchInterval).toBe(5_000);
+    expect(polling.refetchIntervalInBackground).toBe(false);
   });
 
   it("requires confirmation before exporting a failed stale report", async () => {

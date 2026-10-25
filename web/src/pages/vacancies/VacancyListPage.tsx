@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -6,8 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Alert } from "@/components/ui/alert";
 import { Pagination } from "@/components/ui/pagination";
 import { vacanciesApi } from "@/services/vacancies";
+import { vacancyKeys } from "@/lib/queryKeys";
 import { Plus, Briefcase, ChevronRight } from "lucide-react";
-import type { PaginationMeta, Vacancy } from "@/types";
 
 function normalizedPage(value: string | null) {
   if (value === null) return 1;
@@ -29,15 +30,22 @@ export default function VacancyListPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const rawPage = searchParams.get("page");
   const page = normalizedPage(rawPage);
-  const [vacancies, setVacancies] = useState<Vacancy[]>([]);
-  const [meta, setMeta] = useState<PaginationMeta | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
-  const [requestVersion, setRequestVersion] = useState(0);
-  const latestRequestRef = useRef(0);
   const focusPageRef = useRef<number | null>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const {
+    data,
+    isPending,
+    isFetching,
+    isError,
+    refetch,
+  } = useQuery({
+    queryKey: vacancyKeys.list(page),
+    queryFn: async () => (await vacanciesApi.list({ page })).data,
+    placeholderData: keepPreviousData,
+  });
+  const vacancies = data?.vacancies ?? [];
+  const meta = data?.meta ?? null;
 
   useEffect(() => {
     if (rawPage !== null && rawPage !== String(page)) {
@@ -50,47 +58,26 @@ export default function VacancyListPage() {
   }, [page, rawPage, setSearchParams]);
 
   useEffect(() => {
-    const requestId = ++latestRequestRef.current;
-    let redirected = false;
-    setLoading(true);
-    setError(false);
+    if (!meta || isFetching) return;
 
-    vacanciesApi
-      .list({ page })
-      .then((res) => {
-        if (requestId !== latestRequestRef.current) return;
+    const lastPage = Math.max(meta.total_pages, 1);
+    if (page > lastPage) {
+      setSearchParams((current) => {
+        const next = new URLSearchParams(current);
+        next.set("page", String(lastPage));
+        return next;
+      }, { replace: true });
+      return;
+    }
 
-        const nextMeta = res.data.meta;
-        if (page > Math.max(nextMeta.total_pages, 1)) {
-          redirected = true;
-          setSearchParams((current) => {
-            const next = new URLSearchParams(current);
-            next.set("page", String(Math.max(nextMeta.total_pages, 1)));
-            return next;
-          }, { replace: true });
-          return;
-        }
-
-        setVacancies(res.data.vacancies);
-        setMeta(nextMeta);
-
-        if (focusPageRef.current === page) {
-          focusPageRef.current = null;
-          requestAnimationFrame(() => {
-            resultsRef.current?.scrollIntoView({ block: "start" });
-            resultsRef.current?.focus({ preventScroll: true });
-          });
-        }
-      })
-      .catch(() => {
-        if (requestId === latestRequestRef.current) setError(true);
-      })
-      .finally(() => {
-        if (requestId === latestRequestRef.current && !redirected) setLoading(false);
+    if (focusPageRef.current === page) {
+      focusPageRef.current = null;
+      requestAnimationFrame(() => {
+        resultsRef.current?.scrollIntoView({ block: "start" });
+        resultsRef.current?.focus({ preventScroll: true });
       });
-  }, [page, requestVersion]);
-
-  const retry = useCallback(() => setRequestVersion((version) => version + 1), []);
+    }
+  }, [isFetching, meta, page, setSearchParams]);
 
   const changePage = (nextPage: number) => {
     focusPageRef.current = nextPage;
@@ -101,7 +88,7 @@ export default function VacancyListPage() {
     });
   };
 
-  const initialLoading = loading && meta === null;
+  const initialLoading = isPending;
   const hasVacancies = vacancies.length > 0;
 
   return (
@@ -113,10 +100,10 @@ export default function VacancyListPage() {
         </Button>
       </div>
 
-      {error ? (
+      {isError ? (
         <Alert>
           <p className="text-sm">Failed to load vacancies.</p>
-          <Button className="mt-2" variant="outline" size="sm" onClick={retry}>
+          <Button className="mt-2" variant="outline" size="sm" onClick={() => void refetch()}>
             Try Again
           </Button>
         </Alert>
@@ -140,7 +127,7 @@ export default function VacancyListPage() {
           tabIndex={-1}
           aria-label={`Vacancy results, page ${meta?.current_page ?? page}`}
         >
-          <div className="space-y-2" aria-busy={loading}>
+          <div className="space-y-2" aria-busy={isFetching}>
             {vacancies.map((v) => {
               const updatedDate = formatUpdatedDate(v.updated_at);
 
@@ -186,7 +173,7 @@ export default function VacancyListPage() {
               totalCount={meta.total_count}
               pageSize={meta.per_page}
               onPageChange={changePage}
-              loading={loading}
+              loading={isFetching}
               ariaLabel="Vacancy list pagination"
             />
           )}

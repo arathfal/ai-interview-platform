@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import AssessmentInvitePage from "@/pages/assessments/AssessmentInvitePage";
 import { assessmentsApi } from "@/services/assessments";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
 
 vi.mock("@/services/assessments", () => ({
   assessmentsApi: {
@@ -38,7 +39,7 @@ afterEach(() => {
 });
 
 function renderPage() {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={["/assessments/42/invite"]}>
       <Routes>
         <Route path="/assessments/:id/invite" element={<AssessmentInvitePage />} />

@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm, useFieldArray } from "react-hook-form";
 import { useNavigate, useParams, Link } from "react-router-dom";
 import {
@@ -31,16 +32,16 @@ import { assessmentsApi } from "@/services/assessments";
 import { TIME_LIMIT_OPTIONS } from "@/utils/constants";
 import type { AssessmentSkill } from "@/types";
 import type { AssessmentFormValues } from "./AssessmentNewPage";
+import { assessmentKeys } from "@/lib/queryKeys";
 
 export default function AssessmentEditPage() {
   const { id } = useParams<{ id: string }>();
+  const assessmentId = Number(id);
   const navigate = useNavigate();
-  const [loading, setLoading] = useState(true);
-  const [submitting, setSubmitting] = useState(false);
+  const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [skillsError, setSkillsError] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
 
   const form = useForm<AssessmentFormValues>({
     defaultValues: { name: "", time_limit_min: 45, skills: [] },
@@ -49,24 +50,40 @@ export default function AssessmentEditPage() {
   const { register, handleSubmit, control, setValue, reset, formState: { errors } } = form;
   const { fields, append, remove, move } = useFieldArray({ control, name: "skills" });
 
-  const loadAssessment = useCallback(async () => {
-    setLoadError(null);
-    try {
-      const res = await assessmentsApi.get(Number(id));
-      const a = res.data.assessment;
-      reset({ name: a.name, time_limit_min: a.time_limit_min, skills: a.skills });
-      setSkillsError(null);
-    } catch (e) {
-      // F-26: no silent catch — a failed load shows a banner with retry.
-      setLoadError(extractApiError(e).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [id, reset]);
+  const assessmentQuery = useQuery({
+    queryKey: assessmentKeys.detail(assessmentId),
+    queryFn: async () => (await assessmentsApi.get(assessmentId)).data.assessment,
+  });
+
+  const updateMutation = useMutation({
+    mutationFn: (data: AssessmentFormValues) =>
+      assessmentsApi.update(assessmentId, {
+        name: data.name,
+        time_limit_min: data.time_limit_min,
+        language: data.language,
+        assessment_skills_attributes: data.skills.map((skill, index) => ({
+          ...skill,
+          display_order: index,
+        })),
+      }),
+    onSuccess: (response) => {
+      queryClient.setQueryData(assessmentKeys.detail(assessmentId), response.data.assessment);
+      void queryClient.invalidateQueries({ queryKey: assessmentKeys.lists() });
+    },
+  });
 
   useEffect(() => {
-    loadAssessment();
-  }, [loadAssessment]);
+    const assessment = assessmentQuery.data;
+    if (!assessment) return;
+
+    reset({
+      name: assessment.name,
+      time_limit_min: assessment.time_limit_min,
+      language: assessment.language ?? "en",
+      skills: assessment.skills,
+    });
+    setSkillsError(null);
+  }, [assessmentQuery.data, reset]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -89,18 +106,11 @@ export default function AssessmentEditPage() {
     }
     setSkillsError(null);
     setError(null);
-    setSubmitting(true);
     try {
-      await assessmentsApi.update(Number(id), {
-        name: data.name,
-        time_limit_min: data.time_limit_min,
-        assessment_skills_attributes: data.skills.map((s, i) => ({ ...s, display_order: i })),
-      });
+      await updateMutation.mutateAsync(data);
       navigate(`/assessments/${id}/invite`);
-    } catch (e: any) {
+    } catch (e) {
       setError(extractApiError(e).message);
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -110,7 +120,7 @@ export default function AssessmentEditPage() {
     }
   };
 
-  if (loading) {
+  if (assessmentQuery.isPending) {
     return (
       <div className="max-w-2xl mx-auto space-y-4">
         <Skeleton className="h-8 w-48" />
@@ -133,18 +143,15 @@ export default function AssessmentEditPage() {
       </div>
 
       <form onSubmit={handleSubmit(onSubmit, onInvalidSubmit)} className="space-y-6">
-        {loadError && (
+        {assessmentQuery.isError && (
           <Alert>
             <div className="flex items-center justify-between gap-3">
-              <p className="text-sm">Couldn't load this assessment: {loadError}</p>
+              <p className="text-sm">Couldn't load this assessment: {extractApiError(assessmentQuery.error).message}</p>
               <Button
                 variant="outline"
                 size="sm"
                 className="shrink-0"
-                onClick={() => {
-                  setLoading(true);
-                  loadAssessment();
-                }}
+                onClick={() => void assessmentQuery.refetch()}
               >
                 <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
               </Button>
@@ -237,8 +244,8 @@ export default function AssessmentEditPage() {
 
         <div className="flex flex-col-reverse gap-2 md:flex-row md:justify-end">
           <Button type="button" variant="outline" onClick={() => navigate(`/assessments/${id}/invite`)}>Cancel</Button>
-          <Button type="submit" disabled={submitting}>
-            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          <Button type="submit" disabled={updateMutation.isPending}>
+            {updateMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Save Changes
           </Button>
         </div>

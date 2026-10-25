@@ -1,34 +1,32 @@
 import { useEffect, useRef, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { useParams, Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sessionsApi } from "@/services/sessions";
 import { ArrowLeft, Download } from "lucide-react";
 import type { TranscriptTurn } from "@/types";
+import { sessionKeys } from "@/lib/queryKeys";
 
 export default function TranscriptPage() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
+  const numericSessionId = Number(sessionId);
   const [searchParams] = useSearchParams();
   const targetTurn = Number(searchParams.get("turn"));
-  const [turns, setTurns] = useState<TranscriptTurn[]>([]);
-  const [candidateName, setCandidateName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
   const [targetMissing, setTargetMissing] = useState(false);
   const turnRefs = useRef<Record<number, HTMLDivElement | null>>({});
-
-  useEffect(() => {
-    Promise.all([
-      sessionsApi.getTranscript(Number(sessionId)),
-      sessionsApi.get(Number(sessionId)),
-    ])
-      .then(([tRes, sRes]) => {
-        setTurns(tRes.data.turns);
-        setCandidateName(sRes.data.session.candidate_name ?? null);
-      })
-      .catch(() => setError(true))
-      .finally(() => setLoading(false));
-  }, [sessionId]);
+  const transcriptQuery = useQuery({
+    queryKey: sessionKeys.transcript(numericSessionId),
+    queryFn: async () => (await sessionsApi.getTranscript(numericSessionId)).data.turns,
+  });
+  const sessionQuery = useQuery({
+    queryKey: sessionKeys.detail(numericSessionId),
+    queryFn: async () => (await sessionsApi.get(numericSessionId)).data,
+  });
+  const turns: TranscriptTurn[] = transcriptQuery.data ?? [];
+  const candidateName = sessionQuery.data?.session.candidate_name ?? null;
+  const loading = transcriptQuery.isPending || sessionQuery.isPending;
+  const error = transcriptQuery.isError || sessionQuery.isError;
 
   useEffect(() => {
     if (loading || error || !searchParams.has("turn")) return;

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useForm, useFieldArray } from "react-hook-form";
 import { useNavigate, Link } from "react-router-dom";
 import {
@@ -30,6 +31,7 @@ import { extractApiError } from "@/lib/apiErrors";
 import { cn } from "@/lib/utils";
 import { TIME_LIMIT_OPTIONS } from "@/utils/constants";
 import type { AssessmentSkill } from "@/types";
+import { assessmentKeys } from "@/lib/queryKeys";
 
 export interface AssessmentFormValues {
   name: string;
@@ -40,10 +42,14 @@ export interface AssessmentFormValues {
 
 export default function AssessmentNewPage() {
   const navigate = useNavigate();
-  const [submitting, setSubmitting] = useState(false);
+  const queryClient = useQueryClient();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [skillsError, setSkillsError] = useState<string | null>(null);
+  const createMutation = useMutation({
+    mutationFn: assessmentsApi.create,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: assessmentKeys.lists() }),
+  });
 
   const form = useForm<AssessmentFormValues>({
     defaultValues: {
@@ -93,7 +99,6 @@ export default function AssessmentNewPage() {
     }
     setSkillsError(null);
     setError(null);
-    setSubmitting(true);
     try {
       const payload = {
         name: data.name,
@@ -104,12 +109,10 @@ export default function AssessmentNewPage() {
           display_order: i,
         })),
       };
-      const res = await assessmentsApi.create(payload);
+      const res = await createMutation.mutateAsync(payload);
       navigate(`/assessments/${res.data.assessment.id}/invite`);
-    } catch (e: any) {
+    } catch (e) {
       setError(extractApiError(e).message);
-    } finally {
-      setSubmitting(false);
     }
   };
 
@@ -278,8 +281,8 @@ export default function AssessmentNewPage() {
           >
             Cancel
           </Button>
-          <Button type="submit" disabled={submitting}>
-            {submitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+          <Button type="submit" disabled={createMutation.isPending}>
+            {createMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
             Save &amp; Create Session →
           </Button>
         </div>

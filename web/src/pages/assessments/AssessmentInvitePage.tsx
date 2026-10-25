@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
 import { Button } from "@/components/ui/button";
@@ -22,6 +23,7 @@ import { toast } from "@/stores/toastStore";
 import { ArrowLeft, Copy, Check, Eye, Pencil, Clock, Plus, UserRound, RefreshCw, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { Assessment, Session } from "@/types";
+import { assessmentKeys } from "@/lib/queryKeys";
 
 function SessionRow({
   session,
@@ -127,16 +129,13 @@ function SessionRow({
 
 export default function AssessmentInvitePage() {
   const { id } = useParams<{ id: string }>();
+  const assessmentId = Number(id);
   const navigate = useNavigate();
-  const [assessment, setAssessment] = useState<Assessment | null>(null);
-  const [sessions, setSessions] = useState<Session[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [creatingSession, setCreatingSession] = useState(false);
+  const queryClient = useQueryClient();
   const [newSession, setNewSession] = useState<Session | null>(null);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [newSessionCopied, setNewSessionCopied] = useState(false);
   const [showInviteDialog, setShowInviteDialog] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [inviteError, setInviteError] = useState<string | null>(null);
 
   // Local RHF form for the invite dialog (UI enhancement: one form pattern
@@ -147,44 +146,34 @@ export default function AssessmentInvitePage() {
   });
   const { register: registerInvite, formState: inviteState } = inviteForm;
 
-  const loadPage = useCallback(async () => {
-    setLoadError(null);
-    try {
-      const [aRes, sRes] = await Promise.all([
-        assessmentsApi.get(Number(id)),
-        assessmentsApi.getSessions(Number(id)),
+  const assessmentQuery = useQuery({
+    queryKey: assessmentKeys.detail(assessmentId),
+    queryFn: async () => (await assessmentsApi.get(assessmentId)).data.assessment,
+  });
+  const sessionsQuery = useQuery({
+    queryKey: assessmentKeys.sessions(assessmentId),
+    queryFn: async () => (await assessmentsApi.getSessions(assessmentId)).data.sessions,
+    refetchInterval: (query) =>
+      query.state.data?.some((session) => session.status !== "ended") ? 5_000 : false,
+  });
+  const assessment: Assessment | null = assessmentQuery.data ?? null;
+  const sessions: Session[] = sessionsQuery.data ?? [];
+
+  const createSessionMutation = useMutation({
+    mutationFn: (candidateName?: string) =>
+      assessmentsApi.createSession(assessmentId, candidateName),
+    onSuccess: (response) => {
+      const created = response.data.session;
+      queryClient.setQueryData<Session[]>(assessmentKeys.sessions(assessmentId), (current = []) => [
+        created,
+        ...current,
       ]);
-      setAssessment(aRes.data.assessment);
-      setSessions(sRes.data.sessions);
-    } catch (e) {
-      // F-26: never silently swallow a failed page load — show an inline
-      // banner with a retry action instead of an empty page with no feedback.
-      setLoadError(extractApiError(e).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [id]);
-
-  const loadSessions = useCallback(async () => {
-    try {
-      const res = await assessmentsApi.getSessions(Number(id));
-      setSessions(res.data.sessions);
-    } catch {
-      // Polling is best-effort — the initial load already surfaced errors.
-    }
-  }, [id]);
-
-  useEffect(() => {
-    loadPage();
-  }, [loadPage]);
-
-  // Poll while any session is live or pending
-  useEffect(() => {
-    const hasActive = sessions.some((s) => s.status !== "ended");
-    if (!hasActive) return;
-    const interval = setInterval(loadSessions, 5000);
-    return () => clearInterval(interval);
-  }, [sessions, loadSessions]);
+      setNewSession(created);
+      setShowInviteDialog(false);
+      toast.success("Invite link created", "Share the link with your candidate.");
+    },
+    onError: (error) => setInviteError(extractApiError(error).message),
+  });
 
   const openInviteDialog = () => {
     inviteForm.reset({ candidateName: "" });
@@ -196,21 +185,9 @@ export default function AssessmentInvitePage() {
   // failure an inline error is shown inside the dialog instead of silently
   // closing it and leaving the assessor with no feedback.
   const handleInviteCandidate = async (data: { candidateName: string }) => {
-    setCreatingSession(true);
     setInviteError(null);
     setNewSession(null);
-    try {
-      const res = await assessmentsApi.createSession(Number(id), data.candidateName.trim() || undefined);
-      const created = res.data.session;
-      setNewSession(created);
-      setSessions((prev) => [created, ...prev]);
-      setShowInviteDialog(false);
-      toast.success("Invite link created", "Share the link with your candidate.");
-    } catch (e) {
-      setInviteError(extractApiError(e).message);
-    } finally {
-      setCreatingSession(false);
-    }
+    createSessionMutation.mutate(data.candidateName.trim() || undefined);
   };
 
   const copyLink = (session: Session, id: number) => {
@@ -225,6 +202,9 @@ export default function AssessmentInvitePage() {
     setNewSessionCopied(true);
     setTimeout(() => setNewSessionCopied(false), 2000);
   };
+
+  const loading = assessmentQuery.isPending || sessionsQuery.isPending;
+  const loadError = assessmentQuery.error ?? sessionsQuery.error;
 
   if (loading) {
     return (
@@ -242,16 +222,13 @@ export default function AssessmentInvitePage() {
       {loadError && (
         <Alert className="items-center">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm">Couldn't load this assessment: {loadError}</p>
+            <p className="text-sm">Couldn't load this assessment: {extractApiError(loadError).message}</p>
             <Button
               variant="outline"
               size="sm"
               
               className="shrink-0"
-              onClick={() => {
-                setLoading(true);
-                loadPage();
-              }}
+              onClick={() => void Promise.all([assessmentQuery.refetch(), sessionsQuery.refetch()])}
             >
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
             </Button>
@@ -278,9 +255,9 @@ export default function AssessmentInvitePage() {
           <Button variant="outline" size="sm" onClick={() => navigate(`/assessments/${id}/edit`)}>
             <Pencil className="h-3.5 w-3.5 mr-1.5" /> Edit
           </Button>
-          <Button size="sm" onClick={openInviteDialog} disabled={creatingSession}>
+          <Button size="sm" onClick={openInviteDialog} disabled={createSessionMutation.isPending}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
-            {creatingSession ? "Creating..." : "Invite Candidate"}
+            {createSessionMutation.isPending ? "Creating..." : "Invite Candidate"}
           </Button>
         </div>
       </div>
@@ -301,7 +278,7 @@ export default function AssessmentInvitePage() {
                 id="candidate-name"
                 placeholder="e.g. Budi Santoso"
                 autoFocus
-                disabled={creatingSession}
+                disabled={createSessionMutation.isPending}
                 aria-invalid={inviteState.errors.candidateName ? true : undefined}
                 className={cn(
                   inviteState.errors.candidateName &&
@@ -325,9 +302,9 @@ export default function AssessmentInvitePage() {
               )}
             </div>
             <DialogFooter>
-              <Button type="button" variant="outline" onClick={() => setShowInviteDialog(false)} disabled={creatingSession}>Cancel</Button>
-              <Button type="submit" disabled={creatingSession}>
-                {creatingSession && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+              <Button type="button" variant="outline" onClick={() => setShowInviteDialog(false)} disabled={createSessionMutation.isPending}>Cancel</Button>
+              <Button type="submit" disabled={createSessionMutation.isPending}>
+                {createSessionMutation.isPending && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
                 Create Link
               </Button>
             </DialogFooter>

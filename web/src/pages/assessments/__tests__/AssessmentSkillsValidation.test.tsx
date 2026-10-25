@@ -1,10 +1,11 @@
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AssessmentNewPage from "@/pages/assessments/AssessmentNewPage";
 import AssessmentEditPage from "@/pages/assessments/AssessmentEditPage";
 import { assessmentsApi } from "@/services/assessments";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
 
 vi.mock("@/services/assessments", () => ({
   assessmentsApi: {
@@ -27,7 +28,7 @@ beforeEach(() => {
 });
 
 function renderNewPage() {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={["/assessments/new"]}>
       <Routes>
         <Route path="/assessments/new" element={<AssessmentNewPage />} />
@@ -37,7 +38,7 @@ function renderNewPage() {
 }
 
 function renderEditPage() {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={["/assessments/42/edit"]}>
       <Routes>
         <Route path="/assessments/:id/edit" element={<AssessmentEditPage />} />

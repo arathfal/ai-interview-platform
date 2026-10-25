@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,7 +21,7 @@ import { sessionsApi } from "@/services/sessions";
 import { vacanciesApi } from "@/services/vacancies";
 import { extractApiError } from "@/lib/apiErrors";
 import { getComparisonResult } from "@/utils/fitGap";
-import { usePolling } from "@/hooks/usePolling";
+import { portfolioKeys, sessionKeys, vacancyKeys } from "@/lib/queryKeys";
 import {
   ArrowLeft,
   AlertTriangle,
@@ -32,7 +33,6 @@ import {
   TrendingUp,
   Zap,
 } from "lucide-react";
-import type { FitGapReport, Portfolio, Vacancy } from "@/types";
 
 export default function FitGapReportPage() {
   const { id, sessionId, vacancyId } = useParams<{
@@ -40,102 +40,71 @@ export default function FitGapReportPage() {
     sessionId: string;
     vacancyId: string;
   }>();
-
-  const [report, setReport] = useState<FitGapReport | null>(null);
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [vacancy, setVacancy] = useState<Vacancy | null>(null);
-  const [candidateName, setCandidateName] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [reportLoading, setReportLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [reportError, setReportError] = useState<string | null>(null);
+  const numericSessionId = Number(sessionId);
+  const numericVacancyId = Number(vacancyId);
+  const queryClient = useQueryClient();
   const [exporting, setExporting] = useState<"pdf" | "json" | null>(null);
-  const [regenerating, setRegenerating] = useState(false);
   const [pendingStaleExport, setPendingStaleExport] = useState<"pdf" | "json" | null>(null);
   const [exportError, setExportError] = useState<string | null>(null);
-  const [pageVisible, setPageVisible] = useState(document.visibilityState === "visible");
 
-  const fetchReport = useCallback(async () => {
-    if (!portfolio) return;
-    setReportError(null);
-    try {
-      const res = await portfoliosApi.getFitGap(portfolio.id, Number(vacancyId));
-      setReport(res.data.report);
-    } catch (error: unknown) {
-      const normalizedError = extractApiError(error);
-      if (normalizedError.status === 404) {
-        try {
-          const res = await portfoliosApi.triggerFitGap(portfolio.id, Number(vacancyId));
-          if ("report" in res.data) setReport(res.data.report);
-        } catch (triggerError) {
-          setReportError(extractApiError(triggerError).message);
-        }
-      } else {
-        setReportError(normalizedError.message);
+  const portfolioQuery = useQuery({
+    queryKey: sessionKeys.portfolio(numericSessionId),
+    queryFn: async () => {
+      const data = (await sessionsApi.getPortfolio(numericSessionId)).data;
+      if (!("portfolio" in data)) throw new Error("The candidate portfolio is not ready yet.");
+      return data.portfolio;
+    },
+  });
+  const vacancyQuery = useQuery({
+    queryKey: vacancyKeys.detail(numericVacancyId),
+    queryFn: async () => (await vacanciesApi.get(numericVacancyId)).data.vacancy,
+  });
+  const sessionQuery = useQuery({
+    queryKey: sessionKeys.detail(numericSessionId),
+    queryFn: async () => (await sessionsApi.get(numericSessionId)).data,
+  });
+  const portfolio = portfolioQuery.data ?? null;
+  const vacancy = vacancyQuery.data ?? null;
+  const candidateName = sessionQuery.data?.session.candidate_name ?? null;
+
+  const reportQuery = useQuery({
+    queryKey: portfolioKeys.fitGap(portfolio?.id ?? 0, numericVacancyId),
+    enabled: Boolean(portfolio),
+    queryFn: async () => {
+      try {
+        return (await portfoliosApi.getFitGap(portfolio!.id, numericVacancyId)).data.report;
+      } catch (error) {
+        if (extractApiError(error).status !== 404) throw error;
+        const response = await portfoliosApi.triggerFitGap(portfolio!.id, numericVacancyId);
+        if ("report" in response.data) return response.data.report;
+        return null;
       }
-    } finally {
-      setReportLoading(false);
-    }
-  }, [portfolio, vacancyId]);
-
-  const loadContext = useCallback(async () => {
-    setLoading(true);
-    setLoadError(null);
-    try {
-      const [portfolioResponse, vacancyResponse, sessionResponse] = await Promise.all([
-        sessionsApi.getPortfolio(Number(sessionId)),
-        vacanciesApi.get(Number(vacancyId)),
-        sessionsApi.get(Number(sessionId)),
-      ]);
-      if (!("portfolio" in portfolioResponse.data)) {
-        throw new Error("The candidate portfolio is not ready yet.");
-      }
-      setPortfolio(portfolioResponse.data.portfolio);
-      setVacancy(vacancyResponse.data.vacancy);
-      setCandidateName(sessionResponse.data.session.candidate_name ?? null);
-    } catch (error) {
-      setLoadError(extractApiError(error).message);
-    } finally {
-      setLoading(false);
-    }
-  }, [sessionId, vacancyId]);
+    },
+    refetchInterval: 5_000,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
+  });
+  const report = reportQuery.data ?? null;
 
   useEffect(() => {
-    void loadContext();
-  }, [loadContext]);
-
-  useEffect(() => {
-    if (portfolio) fetchReport();
-  }, [portfolio, fetchReport]);
-
-  usePolling(fetchReport, 5000, !!portfolio && pageVisible);
-
-  useEffect(() => {
-    const refreshOnFocus = () => {
-      const visible = document.visibilityState === "visible";
-      setPageVisible(visible);
-      if (visible) fetchReport();
-    };
-    window.addEventListener("focus", refreshOnFocus);
-    document.addEventListener("visibilitychange", refreshOnFocus);
-    return () => {
-      window.removeEventListener("focus", refreshOnFocus);
-      document.removeEventListener("visibilitychange", refreshOnFocus);
-    };
-  }, [fetchReport]);
-
-  const handleRegenerate = async () => {
     if (!portfolio) return;
-    setRegenerating(true);
-    setReportError(null);
-    try {
-      const res = await portfoliosApi.regenerateFitGap(portfolio.id, Number(vacancyId));
-      setReport(res.data.report);
-    } catch (error) {
-      setReportError(extractApiError(error).message);
-    } finally {
-      setRegenerating(false);
-    }
+    const refetchOnFocus = () => void reportQuery.refetch();
+    window.addEventListener("focus", refetchOnFocus);
+    return () => window.removeEventListener("focus", refetchOnFocus);
+  }, [portfolio, reportQuery.refetch]);
+
+  const regenerateMutation = useMutation({
+    mutationFn: () => portfoliosApi.regenerateFitGap(portfolio!.id, numericVacancyId),
+    onSuccess: (response) => {
+      queryClient.setQueryData(
+        portfolioKeys.fitGap(portfolio!.id, numericVacancyId),
+        response.data.report
+      );
+    },
+  });
+
+  const handleRegenerate = () => {
+    if (portfolio) regenerateMutation.mutate();
   };
 
   const handleExport = async (format: "pdf" | "json", allowStale = false) => {
@@ -216,6 +185,11 @@ export default function FitGapReportPage() {
     },
   }[report.freshness];
 
+  const loading = portfolioQuery.isPending || vacancyQuery.isPending || sessionQuery.isPending;
+  const loadError = portfolioQuery.error || vacancyQuery.error || sessionQuery.error;
+  const reportError = reportQuery.error || regenerateMutation.error;
+  const reportLoading = reportQuery.isPending;
+
   if (loading) {
     return (
       <div className="max-w-2xl mx-auto space-y-4">
@@ -237,10 +211,19 @@ export default function FitGapReportPage() {
           </div>
           <div>
             <h1 className="text-base font-semibold">Couldn't load this Fit/Gap report</h1>
-            <p className="mt-1 break-words text-sm text-muted-foreground">{loadError}</p>
+            <p className="mt-1 break-words text-sm text-muted-foreground">{extractApiError(loadError).message}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-            <Button size="sm" onClick={() => void loadContext()}>
+            <Button
+              size="sm"
+              onClick={() =>
+                void Promise.all([
+                  portfolioQuery.refetch(),
+                  vacancyQuery.refetch(),
+                  sessionQuery.refetch(),
+                ])
+              }
+            >
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Retry
             </Button>
             <Button variant="outline" size="sm" asChild>
@@ -278,8 +261,8 @@ export default function FitGapReportPage() {
 
         {portfolio && (
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" onClick={handleRegenerate} disabled={regenerating || report?.freshness === "updating"}>
-              {regenerating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
+            <Button variant="outline" size="sm" onClick={handleRegenerate} disabled={regenerateMutation.isPending || report?.freshness === "updating"}>
+              {regenerateMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5 mr-1" />}
               Regenerate
             </Button>
             {report && hasCompletedReport && (
@@ -320,15 +303,15 @@ export default function FitGapReportPage() {
         >
           <div className="min-w-0">
             <p className="text-sm font-semibold text-red-900">Couldn't update the Fit/Gap report</p>
-            <p className="mt-0.5 break-words text-xs text-red-800/80">{reportError}</p>
+            <p className="mt-0.5 break-words text-xs text-red-800/80">{extractApiError(reportError).message}</p>
           </div>
           <Button
             variant="outline"
             size="sm"
             className="shrink-0 bg-background"
             onClick={() => {
-              setReportLoading(true);
-              void fetchReport();
+              regenerateMutation.reset();
+              void reportQuery.refetch();
             }}
           >
             <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Retry

@@ -1,8 +1,9 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AdminInvitationsPage from "@/pages/admin/AdminInvitationsPage";
 import { adminInvitationsApi, type AdminInvitation } from "@/services/adminInvitations";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
 
 vi.mock("@/services/adminInvitations", () => ({
   adminInvitationsApi: {
@@ -48,7 +49,7 @@ beforeEach(() => {
 describe("AdminInvitationsPage", () => {
   it("renders an empty state after loading", async () => {
     listMock.mockResolvedValue({ data: { invitations: [] } });
-    render(<AdminInvitationsPage />);
+    renderWithQueryClient(<AdminInvitationsPage />);
 
     expect(await screen.findByText(/no administrator invitations yet/i)).toBeInTheDocument();
   });
@@ -61,7 +62,7 @@ describe("AdminInvitationsPage", () => {
         signup_url: "http://localhost:5173/signup?invitation=raw-token",
       },
     });
-    render(<AdminInvitationsPage />);
+    renderWithQueryClient(<AdminInvitationsPage />);
 
     const user = userEvent.setup();
     const writeTextSpy = vi.spyOn(navigator.clipboard, "writeText").mockResolvedValue();
@@ -88,7 +89,7 @@ describe("AdminInvitationsPage", () => {
         invitation: { ...INVITATION, status: "revoked", revoked_at: "2026-10-24T01:00:00Z" },
       },
     });
-    render(<AdminInvitationsPage />);
+    renderWithQueryClient(<AdminInvitationsPage />);
 
     const user = userEvent.setup();
     expect(await screen.findByText("recipient@example.com")).toBeInTheDocument();
@@ -103,7 +104,7 @@ describe("AdminInvitationsPage", () => {
     listMock
       .mockRejectedValueOnce(new Error("network down"))
       .mockResolvedValueOnce({ data: { invitations: [INVITATION] } });
-    render(<AdminInvitationsPage />);
+    renderWithQueryClient(<AdminInvitationsPage />);
 
     expect(await screen.findByText(/failed to load invitations/i)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: /try again/i }));

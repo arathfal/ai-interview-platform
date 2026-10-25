@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import AssessmentListPage from "@/pages/assessments/AssessmentListPage";
 import { assessmentsApi } from "@/services/assessments";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
 
 vi.mock("@/services/assessments", () => ({
   assessmentsApi: { list: vi.fn() },
@@ -36,7 +37,7 @@ function LocationState() {
 }
 
 function renderPage(entry = "/assessments") {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={[entry]}>
       <Routes>
         <Route

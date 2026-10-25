@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -14,6 +15,7 @@ import {
 } from "@/services/adminInvitations";
 import { extractApiError } from "@/lib/apiErrors";
 import { toast } from "@/stores/toastStore";
+import { adminInvitationKeys } from "@/lib/queryKeys";
 import { Check, Copy, Loader2, MailPlus, RefreshCw, UserPlus, XCircle } from "lucide-react";
 
 const EMAIL_PATTERN = /^\S+@\S+\.\S+$/;
@@ -37,14 +39,10 @@ function formatDate(value: string): string {
 }
 
 export default function AdminInvitationsPage() {
-  const [invitations, setInvitations] = useState<AdminInvitation[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const queryClient = useQueryClient();
   const [createError, setCreateError] = useState<string | null>(null);
   const [signupLink, setSignupLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [revokingId, setRevokingId] = useState<string | null>(null);
 
   const {
     register,
@@ -56,39 +54,46 @@ export default function AdminInvitationsPage() {
     mode: "onTouched",
   });
 
-  const loadInvitations = useCallback(async () => {
-    setLoading(true);
-    setLoadError(false);
-    try {
-      const response = await adminInvitationsApi.list();
-      setInvitations(response.data.invitations);
-    } catch {
-      setLoadError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  const invitationsQuery = useQuery({
+    queryKey: adminInvitationKeys.list(),
+    queryFn: async () => (await adminInvitationsApi.list()).data.invitations,
+  });
+  const invitations = invitationsQuery.data ?? [];
 
-  useEffect(() => {
-    void loadInvitations();
-  }, [loadInvitations]);
-
-  const createInvitation = async ({ email }: InvitationFormValues) => {
-    setCreating(true);
-    setCreateError(null);
-    setSignupLink(null);
-    setCopied(false);
-    try {
-      const response = await adminInvitationsApi.create(email);
-      setInvitations((current) => [response.data.invitation, ...current]);
+  const createMutation = useMutation({
+    mutationFn: (email: string) => adminInvitationsApi.create(email),
+    onSuccess: (response) => {
+      queryClient.setQueryData<AdminInvitation[]>(adminInvitationKeys.list(), (current = []) => [
+        response.data.invitation,
+        ...current,
+      ]);
       setSignupLink(response.data.signup_url);
       reset();
       toast.success("Invitation created", "Copy the link and send it to the recipient.");
-    } catch (err) {
-      setCreateError(extractApiError(err).message);
-    } finally {
-      setCreating(false);
-    }
+    },
+    onError: (error) => setCreateError(extractApiError(error).message),
+  });
+
+  const revokeMutation = useMutation({
+    mutationFn: (id: string) => adminInvitationsApi.revoke(id),
+    onSuccess: (response, id) => {
+      queryClient.setQueryData<AdminInvitation[]>(adminInvitationKeys.list(), (current = []) =>
+        current.map((invitation) =>
+          invitation.id === id ? response.data.invitation : invitation
+        )
+      );
+      toast.success("Invitation revoked");
+    },
+    onError: (error) => {
+      toast.error("Unable to revoke invitation", extractApiError(error).message);
+    },
+  });
+
+  const createInvitation = async ({ email }: InvitationFormValues) => {
+    setCreateError(null);
+    setSignupLink(null);
+    setCopied(false);
+    createMutation.mutate(email);
   };
 
   const copyLink = async () => {
@@ -100,21 +105,6 @@ export default function AdminInvitationsPage() {
       toast.success("Invitation link copied");
     } catch {
       toast.error("Unable to copy the invitation link", "Select and copy the link manually.");
-    }
-  };
-
-  const revokeInvitation = async (id: string) => {
-    setRevokingId(id);
-    try {
-      const response = await adminInvitationsApi.revoke(id);
-      setInvitations((current) =>
-        current.map((invitation) => (invitation.id === id ? response.data.invitation : invitation))
-      );
-      toast.success("Invitation revoked");
-    } catch (err) {
-      toast.error("Unable to revoke invitation", extractApiError(err).message);
-    } finally {
-      setRevokingId(null);
     }
   };
 
@@ -144,8 +134,8 @@ export default function AdminInvitationsPage() {
                     pattern: { value: EMAIL_PATTERN, message: "Enter a valid email address." },
                   })}
                 />
-                <Button type="submit" className="shrink-0" disabled={creating}>
-                  {creating ? <Loader2 className="h-4 w-4 animate-spin" /> : <MailPlus className="h-4 w-4" />}
+                <Button type="submit" className="shrink-0" disabled={createMutation.isPending}>
+                  {createMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <MailPlus className="h-4 w-4" />}
                   Create invitation
                 </Button>
               </div>
@@ -178,25 +168,25 @@ export default function AdminInvitationsPage() {
       <section className="space-y-3" aria-labelledby="invitation-list-title">
         <div className="flex items-center justify-between gap-2">
           <h2 id="invitation-list-title" className="font-semibold">Invitation history</h2>
-          <Button type="button" variant="ghost" size="sm" onClick={() => void loadInvitations()} disabled={loading}>
-            <RefreshCw className={loading ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> Refresh
+          <Button type="button" variant="ghost" size="sm" onClick={() => void invitationsQuery.refetch()} disabled={invitationsQuery.isFetching}>
+            <RefreshCw className={invitationsQuery.isFetching ? "h-4 w-4 animate-spin" : "h-4 w-4"} /> Refresh
           </Button>
         </div>
 
-        {loadError && (
+        {invitationsQuery.isError && (
           <Alert>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p>Failed to load invitations.</p>
-              <Button type="button" variant="outline" size="sm" onClick={() => void loadInvitations()}>Try again</Button>
+              <Button type="button" variant="outline" size="sm" onClick={() => void invitationsQuery.refetch()}>Try again</Button>
             </div>
           </Alert>
         )}
 
-        {loading ? (
+        {invitationsQuery.isPending ? (
           <div className="space-y-2">
             {[1, 2, 3].map((item) => <Skeleton key={item} className="h-24 w-full" />)}
           </div>
-        ) : !loadError && invitations.length === 0 ? (
+        ) : !invitationsQuery.isError && invitations.length === 0 ? (
           <div className="rounded-lg border p-10 text-center text-sm text-muted-foreground">
             <UserPlus className="mx-auto mb-3 h-8 w-8" />
             No administrator invitations yet.
@@ -221,10 +211,10 @@ export default function AdminInvitationsPage() {
                       variant="outline"
                       size="sm"
                       className="shrink-0"
-                      disabled={revokingId === invitation.id}
-                      onClick={() => void revokeInvitation(invitation.id)}
+                      disabled={revokeMutation.isPending && revokeMutation.variables === invitation.id}
+                      onClick={() => revokeMutation.mutate(invitation.id)}
                     >
-                      {revokingId === invitation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                      {revokeMutation.isPending && revokeMutation.variables === invitation.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
                       Revoke
                     </Button>
                   )}

@@ -1,4 +1,5 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +13,7 @@ import { portfoliosApi } from "@/services/portfolios";
 import { extractApiError } from "@/lib/apiErrors";
 import { parseLevel } from "@/utils/constants";
 import { toast } from "@/stores/toastStore";
-import { usePolling } from "@/hooks/usePolling";
+import { sessionKeys, vacancyKeys } from "@/lib/queryKeys";
 import {
   ArrowLeft,
   Download,
@@ -26,89 +27,71 @@ import {
   ListChecks,
   ShieldCheck,
 } from "lucide-react";
-import type { Portfolio, AssessorOverride, PaginationMeta, Vacancy } from "@/types";
+import type { Portfolio, AssessorOverride } from "@/types";
 
 export default function PortfolioPage() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
+  const numericSessionId = Number(sessionId);
   const navigate = useNavigate();
-  const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
-  const [generating, setGenerating] = useState(false);
-  const [loading, setLoading] = useState(true);
+  const queryClient = useQueryClient();
   const [overrides, setOverrides] = useState<Record<number, AssessorOverride>>({});
-  const [vacancies, setVacancies] = useState<Vacancy[]>([]);
-  const [vacancyMeta, setVacancyMeta] = useState<PaginationMeta | null>(null);
   const [selectedVacancy, setSelectedVacancy] = useState<string>("");
   const [exporting, setExporting] = useState<"pdf" | "json" | null>(null);
-  const [candidateName, setCandidateName] = useState<string | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
+
+  const portfolioQuery = useQuery({
+    queryKey: sessionKeys.portfolio(numericSessionId),
+    queryFn: async () => (await sessionsApi.getPortfolio(numericSessionId)).data,
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      const generating =
+        data &&
+        (("status" in data && data.status === "generating") ||
+          ("portfolio" in data && ["generating", "pending"].includes(data.portfolio.generation_status)));
+      return generating ? 5_000 : false;
+    },
+  });
+  const vacanciesQuery = useQuery({
+    queryKey: vacancyKeys.list(1, 100),
+    queryFn: async () => (await vacanciesApi.list({ page: 1, perPage: 100 })).data,
+  });
+  const sessionQuery = useQuery({
+    queryKey: sessionKeys.detail(numericSessionId),
+    queryFn: async () => (await sessionsApi.get(numericSessionId)).data,
+  });
+
+  const regenerateMutation = useMutation({
+    mutationFn: () => sessionsApi.regeneratePortfolio(numericSessionId),
+    onSuccess: () => {
+      queryClient.setQueryData(sessionKeys.portfolio(numericSessionId), {
+        status: "generating",
+      });
+    },
+  });
+
+  const portfolioResponse = portfolioQuery.data;
+  const portfolio: Portfolio | null =
+    portfolioResponse && "portfolio" in portfolioResponse ? portfolioResponse.portfolio : null;
+  const generating = Boolean(
+    portfolioResponse &&
+      (("status" in portfolioResponse && portfolioResponse.status === "generating") ||
+        ("portfolio" in portfolioResponse &&
+          ["generating", "pending"].includes(portfolioResponse.portfolio.generation_status)))
+  );
+  const vacancies = vacanciesQuery.data?.vacancies ?? [];
+  const vacancyMeta = vacanciesQuery.data?.meta ?? null;
+  const candidateName = sessionQuery.data?.session.candidate_name ?? null;
   const missingAssessmentSkills = portfolio?.failure_reason === "missing_assessment_skills";
   const missingCoverage = portfolio?.failure_reason === "missing_coverage";
   const configurationError = missingAssessmentSkills || missingCoverage;
 
-  const applyPortfolioResponse = useCallback(
-    (data: { portfolio: Portfolio } | { status: string }) => {
-      if (
-        ("status" in data && data.status === "generating") ||
-        ("portfolio" in data &&
-          (data.portfolio.generation_status === "generating" ||
-            data.portfolio.generation_status === "pending"))
-      ) {
-        setGenerating(true);
-        return;
-      }
-
-      if ("portfolio" in data) {
-        setPortfolio(data.portfolio);
-        setGenerating(false);
-        setOverrides(
-          Object.fromEntries(
-            data.portfolio.overrides.map((override) => [override.portfolio_skill_id, override])
-          )
-        );
-      }
-    },
-    []
-  );
-
-  const fetchPortfolio = useCallback(async () => {
-    try {
-      const response = await sessionsApi.getPortfolio(Number(sessionId));
-      applyPortfolioResponse(response.data);
-    } catch (error) {
-      setGenerating(false);
-      setLoadError(extractApiError(error).message);
-    }
-  }, [applyPortfolioResponse, sessionId]);
-
-  const loadPage = useCallback(async () => {
-    setLoadError(null);
-    setLoading(true);
-
-    try {
-      const [portfolioResponse, vacancyResponse, sessionResponse] = await Promise.all([
-        sessionsApi.getPortfolio(Number(sessionId)),
-        vacanciesApi.list({ page: 1, perPage: 100 }),
-        sessionsApi.get(Number(sessionId)),
-      ]);
-
-      applyPortfolioResponse(portfolioResponse.data);
-      setVacancies(vacancyResponse.data.vacancies);
-      setVacancyMeta(vacancyResponse.data.meta ?? null);
-      setCandidateName(sessionResponse.data.session.candidate_name ?? null);
-    } catch (error) {
-      setLoadError(extractApiError(error).message);
-      setGenerating(false);
-    } finally {
-      setLoading(false);
-    }
-  }, [applyPortfolioResponse, sessionId]);
-
   useEffect(() => {
-    void loadPage();
-  }, [loadPage]);
-
-  // Poll while generating
-  usePolling(fetchPortfolio, 5000, generating);
+    if (!portfolio) return;
+    setOverrides(
+      Object.fromEntries(
+        portfolio.overrides.map((override) => [override.portfolio_skill_id, override])
+      )
+    );
+  }, [portfolio]);
 
   const handleOverrideSaved = (skillId: number, override: AssessorOverride) => {
     setOverrides((prev) => ({ ...prev, [skillId]: override }));
@@ -174,6 +157,10 @@ export default function PortfolioPage() {
     skillCount === 0 ? 0 : Math.round((mediumHighConfidenceCount / skillCount) * 100);
   const vacancyOptionsTruncated = (vacancyMeta?.total_count ?? vacancies.length) > vacancies.length;
 
+  const loading = portfolioQuery.isPending || vacanciesQuery.isPending || sessionQuery.isPending;
+  const loadError =
+    (!portfolioQuery.data && portfolioQuery.error) || vacanciesQuery.error || sessionQuery.error;
+
   if (loading) {
     return (
       <div className="max-w-2xl mx-auto space-y-4">
@@ -196,10 +183,19 @@ export default function PortfolioPage() {
           </div>
           <div>
             <h1 className="text-base font-semibold">Couldn't load this portfolio</h1>
-            <p className="mt-1 break-words text-sm text-muted-foreground">{loadError}</p>
+            <p className="mt-1 break-words text-sm text-muted-foreground">{extractApiError(loadError).message}</p>
           </div>
           <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
-            <Button size="sm" onClick={() => void loadPage()}>
+            <Button
+              size="sm"
+              onClick={() =>
+                void Promise.all([
+                  portfolioQuery.refetch(),
+                  vacanciesQuery.refetch(),
+                  sessionQuery.refetch(),
+                ])
+              }
+            >
               <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Retry
             </Button>
             <Button
@@ -371,10 +367,8 @@ export default function PortfolioPage() {
           ) : (
             <Button
               size="sm"
-              onClick={async () => {
-                await sessionsApi.regeneratePortfolio(Number(sessionId));
-                setGenerating(true);
-              }}
+              onClick={() => regenerateMutation.mutate()}
+              disabled={regenerateMutation.isPending}
             >
               <RefreshCw className="h-3.5 w-3.5 mr-1.5" aria-hidden="true" /> Retry
             </Button>

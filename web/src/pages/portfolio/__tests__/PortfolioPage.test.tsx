@@ -1,10 +1,11 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import PortfolioPage from "@/pages/portfolio/PortfolioPage";
 import { sessionsApi } from "@/services/sessions";
 import { vacanciesApi } from "@/services/vacancies";
+import { renderWithQueryClient } from "@/test/renderWithQueryClient";
 
 vi.mock("@/services/sessions", () => ({
   sessionsApi: {
@@ -20,10 +21,6 @@ vi.mock("@/services/vacancies", () => ({
 
 vi.mock("@/services/portfolios", () => ({
   portfoliosApi: { exportPortfolio: vi.fn() },
-}));
-
-vi.mock("@/hooks/usePolling", () => ({
-  usePolling: vi.fn(),
 }));
 
 const getPortfolioMock = sessionsApi.getPortfolio as ReturnType<typeof vi.fn>;
@@ -94,7 +91,7 @@ beforeEach(() => {
 });
 
 function renderPage() {
-  return render(
+  return renderWithQueryClient(
     <MemoryRouter initialEntries={["/assessments/10/sessions/23/portfolio"]}>
       <Routes>
         <Route path="/assessments/:id/sessions/:sessionId/portfolio" element={<PortfolioPage />} />
