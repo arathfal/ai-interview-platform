@@ -304,6 +304,7 @@ export default function PortfolioPage() {
                   key={skill.id}
                   skill={skill}
                   override={overrides[skill.id]}
+                  transcriptPath={`/assessments/${id}/sessions/${sessionId}/transcript`}
                   onOverrideSaved={(o) => handleOverrideSaved(skill.id, o)}
                 />
               ))}
@@ -330,6 +331,7 @@ export default function PortfolioPage() {
                       key={skill.id}
                       skill={skill}
                       override={overrides[skill.id]}
+                      transcriptPath={`/assessments/${id}/sessions/${sessionId}/transcript`}
                       onOverrideSaved={(o) => handleOverrideSaved(skill.id, o)}
                     />
                   ))}

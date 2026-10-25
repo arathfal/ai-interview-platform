@@ -55,6 +55,14 @@ RSpec.describe Portfolios::Generator do
 
   let(:gemini_client) { double('Gemini::HttpClient') }
 
+  let!(:candidate_turn) do
+    session.transcript_turns.create!(
+      turn_number: 2,
+      speaker: 'candidate',
+      text: 'I measured render latency before choosing the component boundary.'
+    )
+  end
+
   let(:generator) do
     described_class.new(session: session, gemini_client: gemini_client)
   end
@@ -74,7 +82,10 @@ RSpec.describe Portfolios::Generator do
       'skill_label'        => label,
       'level'              => 3,
       'confidence'         => confidence,
-      'evidence'           => ['quote 1', 'quote 2'],
+      'evidence'           => [{
+        'turn_number' => candidate_turn.turn_number,
+        'quote' => 'I measured render latency before choosing the component boundary.'
+      }],
       'competency_summary' => summary
     }
   end
@@ -92,6 +103,49 @@ RSpec.describe Portfolios::Generator do
           expect(portfolio.portfolio_skills.count).to eq(3)
           expect(portfolio.portfolio_skills.pluck(:ai_level)).to all(be_between(1, 5))
         end
+      end
+
+      it 'asks for explicit turn references in the model contract' do
+        allow(gemini_client).to receive(:generate_content) do |prompt, **|
+          expect(prompt).to include('[TURN 2][CANDIDATE]')
+          expect(prompt).to include('"turn_number": 14')
+          { 'configured_skills' => [skill('React')], 'discovered_skills' => [] }
+        end
+
+        in_tenant { generator.call }
+      end
+
+      it 'persists only same-session candidate citations and keeps the skill when others are invalid' do
+        session.transcript_turns.create!(turn_number: 1, speaker: 'ai', text: 'Tell me about React.')
+        payload = skill('React').merge(
+          'evidence' => [
+            { 'turn_number' => 2, 'quote' => 'I measured render latency before choosing the component boundary.' },
+            { 'turn_number' => 1, 'quote' => 'Tell me about React.' },
+            { 'turn_number' => 2, 'quote' => 'I always choose components without measuring anything.' }
+          ]
+        )
+
+        portfolio = run_generator!('configured_skills' => [payload], 'discovered_skills' => [])
+        saved_skill = in_tenant { portfolio.portfolio_skills.first }
+
+        expect(portfolio.generation_status).to eq('complete')
+        expect(saved_skill.evidence_status).to eq('verified')
+        expect(saved_skill.evidence).to contain_exactly(
+          hash_including('turn_id' => candidate_turn.id, 'verification_status' => 'verified')
+        )
+      end
+
+      it 'retains a skill with an explicit insufficient evidence status when every citation is rejected' do
+        payload = skill('React').merge(
+          'evidence' => [{ 'turn_number' => 2, 'quote' => 'A fabricated paraphrase.' }]
+        )
+
+        portfolio = run_generator!('configured_skills' => [payload], 'discovered_skills' => [])
+        saved_skill = in_tenant { portfolio.portfolio_skills.first }
+
+        expect(portfolio.generation_status).to eq('complete')
+        expect(saved_skill.evidence).to eq([])
+        expect(saved_skill.evidence_status).to eq('insufficient')
       end
 
       it 'clears an earlier generation error after a successful retry' do

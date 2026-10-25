@@ -5,22 +5,25 @@ import OverridePanel from "./OverridePanel";
 import { Zap } from "lucide-react";
 import { parseLevel } from "@/utils/constants";
 import type { PortfolioSkill, AssessorOverride } from "@/types";
+import { Link } from "react-router-dom";
 
 interface SkillPortfolioCardProps {
   skill: PortfolioSkill;
   override?: AssessorOverride;
   onOverrideSaved: (override: AssessorOverride) => void;
+  transcriptPath: string;
 }
 
 export default function SkillPortfolioCard({
   skill,
   override,
   onOverrideSaved,
+  transcriptPath,
 }: SkillPortfolioCardProps) {
   const effectiveLevel = override?.override_level ?? parseLevel(skill.ai_level);
 
   return (
-    <Card>
+    <Card id={`skill-${skill.id}`}>
       <CardContent className="p-4 space-y-4">
         {/* Skill header */}
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -55,12 +58,36 @@ export default function SkillPortfolioCard({
               Evidence from interview
             </span>
             <ul className="space-y-1">
-              {skill.evidence.map((quote, i) => (
-                <li key={i} className="text-sm text-foreground">
-                  • "{quote}"
+              {skill.evidence.map((citation, i) => (
+                <li key={`${citation.turn_id ?? "legacy"}-${i}`} className="text-sm text-foreground">
+                  {citation.verification_status === "verified" && citation.turn_number ? (
+                    <div className="space-y-1">
+                      <p>• “{citation.quote}”</p>
+                      <Link
+                        to={`${transcriptPath}?turn=${citation.turn_number}`}
+                        className="inline-flex text-xs font-medium text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label={`View evidence in transcript, turn ${citation.turn_number}`}
+                      >
+                        Verified transcript turn {citation.turn_number}
+                      </Link>
+                    </div>
+                  ) : (
+                    <div>
+                      <p>{citation.quote}</p>
+                      <p className="text-xs text-muted-foreground">
+                        Legacy evidence — transcript link unavailable
+                      </p>
+                    </div>
+                  )}
                 </li>
               ))}
             </ul>
+          </div>
+        )}
+
+        {skill.evidence_status === "insufficient" && (
+          <div role="status" className="text-xs text-muted-foreground bg-amber-50 border border-amber-200 rounded px-3 py-2">
+            Insufficient verified transcript evidence. The skill assessment is retained, but no candidate quote is presented as verified.
           </div>
         )}
 

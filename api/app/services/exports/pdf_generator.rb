@@ -101,12 +101,21 @@ module Exports
         pdf.font_size(10) { pdf.text skill.competency_summary }
       end
 
-      if skill.evidence.any?
+      if skill.evidence_items.any?
         pdf.move_down 4
         pdf.font_size(10) do
           pdf.text "Evidence:", style: :bold
-          skill.evidence.each { |quote| pdf.text "  - #{quote}" }
+          skill.evidence_items.each do |citation|
+            if citation['verification_status'] == 'verified'
+              pdf.text "  - \"#{citation['quote']}\" (Verified transcript turn #{citation['turn_number']})"
+            else
+              pdf.text "  - Legacy evidence - transcript link unavailable: #{citation['quote']}"
+            end
+          end
         end
+      elsif skill.evidence_status == 'insufficient'
+        pdf.move_down 4
+        pdf.font_size(10) { pdf.text 'Evidence: Insufficient verified transcript evidence' }
       end
 
       if override&.assessor_notes.present?
