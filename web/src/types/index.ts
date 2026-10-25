@@ -93,8 +93,16 @@ export interface PortfolioSkill {
   is_discovered: boolean;
   ai_level: string;       // "L1" | "L2" | "L3" | "L4" | "L5"
   ai_confidence: string;  // "high" | "medium" | "low"
-  evidence: string[];
+  evidence: PortfolioEvidence[];
+  evidence_status: "verified" | "legacy" | "insufficient";
   competency_summary: string;
+}
+
+export interface PortfolioEvidence {
+  turn_id: number | null;
+  turn_number: number | null;
+  quote: string;
+  verification_status: "verified" | "legacy";
 }
 
 export interface AssessorOverride {

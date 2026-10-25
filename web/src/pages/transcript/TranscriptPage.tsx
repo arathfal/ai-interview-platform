@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useParams, Link, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { sessionsApi } from "@/services/sessions";
@@ -8,10 +8,14 @@ import type { TranscriptTurn } from "@/types";
 
 export default function TranscriptPage() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
+  const [searchParams] = useSearchParams();
+  const targetTurn = Number(searchParams.get("turn"));
   const [turns, setTurns] = useState<TranscriptTurn[]>([]);
   const [candidateName, setCandidateName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
+  const [targetMissing, setTargetMissing] = useState(false);
+  const turnRefs = useRef<Record<number, HTMLDivElement | null>>({});
 
   useEffect(() => {
     Promise.all([
@@ -25,6 +29,26 @@ export default function TranscriptPage() {
       .catch(() => setError(true))
       .finally(() => setLoading(false));
   }, [sessionId]);
+
+  useEffect(() => {
+    if (loading || error || !searchParams.has("turn")) return;
+
+    if (!Number.isInteger(targetTurn) || targetTurn <= 0) {
+      setTargetMissing(true);
+      return;
+    }
+
+    const target = turns.find((turn) => turn.turn_number === targetTurn);
+    if (!target) {
+      setTargetMissing(true);
+      return;
+    }
+
+    setTargetMissing(false);
+    const element = turnRefs.current[target.id];
+    element?.scrollIntoView?.({ behavior: "smooth", block: "center" });
+    element?.focus();
+  }, [error, loading, searchParams, targetTurn, turns]);
 
   const handleDownload = () => {
     const lines = turns.map((t) => {
@@ -85,25 +109,36 @@ export default function TranscriptPage() {
         </div>
       )}
 
+      {!loading && !error && targetMissing && (
+        <div role="status" className="border border-amber-300 bg-amber-50 rounded-lg p-3 text-sm text-amber-900">
+          The requested transcript turn is unavailable. The rest of the transcript is still shown below.
+        </div>
+      )}
+
       {!loading && !error && turns.length > 0 && (
         <div className="space-y-3">
           {turns.map((turn) => {
             const isAI = turn.speaker === "ai";
+            const isTarget = turn.turn_number === targetTurn;
             return (
               <div
                 key={turn.id}
+                id={`turn-${turn.turn_number}`}
+                ref={(element) => { turnRefs.current[turn.id] = element; }}
+                tabIndex={-1}
+                aria-label={`${isAI ? "AI interviewer" : "Candidate"}, turn ${turn.turn_number}`}
                 className={`rounded-lg p-4 ${
                   isAI
                     ? "bg-muted border"
                     : "bg-background border border-primary/20"
-                }`}
+                } ${isTarget ? "ring-2 ring-primary ring-offset-2" : ""}`}
               >
                 <p
                   className={`text-xs font-semibold mb-1 ${
                     isAI ? "text-muted-foreground" : "text-primary"
                   }`}
                 >
-                  {isAI ? "AI Interviewer" : "Candidate"}
+                  {isAI ? "AI Interviewer" : "Candidate"} · Turn {turn.turn_number}
                 </p>
                 <p className="text-sm whitespace-pre-wrap">{turn.text}</p>
               </div>
