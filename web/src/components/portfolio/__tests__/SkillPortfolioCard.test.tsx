@@ -67,4 +67,19 @@ describe("SkillPortfolioCard evidence provenance", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("Insufficient verified transcript evidence");
   });
+
+  it("groups low confidence and insufficient evidence into one quality notice", () => {
+    renderCard({
+      ...baseSkill,
+      ai_confidence: "low",
+      evidence_status: "insufficient",
+      evidence: [],
+    });
+
+    const notice = screen.getByRole("status");
+    expect(notice).toHaveTextContent("Evidence quality");
+    expect(notice).toHaveTextContent("Only briefly explored");
+    expect(notice).toHaveTextContent("Insufficient verified transcript evidence");
+    expect(screen.getAllByRole("status")).toHaveLength(1);
+  });
 });

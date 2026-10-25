@@ -5,11 +5,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import FitGapReportPage from "@/pages/fitgap/FitGapReportPage";
 import { portfoliosApi } from "@/services/portfolios";
 import { sessionsApi } from "@/services/sessions";
+import { vacanciesApi } from "@/services/vacancies";
 import { usePolling } from "@/hooks/usePolling";
 import type { FitGapReport } from "@/types";
 
 vi.mock("@/services/sessions", () => ({
-  sessionsApi: { getPortfolio: vi.fn() },
+  sessionsApi: { getPortfolio: vi.fn(), get: vi.fn() },
+}));
+
+vi.mock("@/services/vacancies", () => ({
+  vacanciesApi: { get: vi.fn() },
 }));
 
 vi.mock("@/services/portfolios", () => ({
@@ -60,6 +65,8 @@ const report: FitGapReport = {
 };
 
 const getPortfolioMock = sessionsApi.getPortfolio as ReturnType<typeof vi.fn>;
+const getSessionMock = sessionsApi.get as ReturnType<typeof vi.fn>;
+const getVacancyMock = vacanciesApi.get as ReturnType<typeof vi.fn>;
 const getFitGapMock = portfoliosApi.getFitGap as ReturnType<typeof vi.fn>;
 const exportPortfolioMock = portfoliosApi.exportPortfolio as ReturnType<typeof vi.fn>;
 const usePollingMock = usePolling as ReturnType<typeof vi.fn>;
@@ -80,6 +87,18 @@ function renderPage() {
 beforeEach(() => {
   vi.clearAllMocks();
   getPortfolioMock.mockResolvedValue({ data: { portfolio } });
+  getSessionMock.mockResolvedValue({ data: { session: { candidate_name: "Musa" } } });
+  getVacancyMock.mockResolvedValue({
+    data: {
+      vacancy: {
+        id: 4,
+        role_title: "Senior Frontend Engineer",
+        culture_dimensions: "Collaborative",
+        competency_expectations: "Frontend delivery",
+        skills: [],
+      },
+    },
+  });
   exportPortfolioMock.mockResolvedValue({ data: new Blob(["pdf"]) });
   vi.stubGlobal("URL", {
     ...URL,
@@ -90,6 +109,43 @@ beforeEach(() => {
 });
 
 describe("FitGapReportPage freshness", () => {
+  it("shows vacancy context and a requirement-based fit summary", async () => {
+    getFitGapMock.mockResolvedValue({
+      data: {
+        report: {
+          ...report,
+          skill_comparisons: [
+            report.skill_comparisons[0],
+            {
+              skill_id: "typescript",
+              skill_label: "TypeScript",
+              expected_level: 3,
+              candidate_level: 3,
+              result: "match",
+              confidence: "medium",
+            },
+            {
+              skill_id: "testing",
+              skill_label: "Testing",
+              expected_level: 3,
+              candidate_level: null,
+              result: "not_assessed",
+              confidence: null,
+            },
+          ],
+        },
+      },
+    });
+
+    renderPage();
+
+    expect(await screen.findByText("Musa · Senior Frontend Engineer")).toBeInTheDocument();
+    expect(screen.getByLabelText("Role fit estimate: 50")).toHaveTextContent("50%");
+    expect(screen.getByLabelText("Meets or exceeds: 1")).toBeInTheDocument();
+    expect(screen.getByLabelText("Skill gaps: 1")).toHaveTextContent("1 not assessed");
+    expect(screen.getByText(/not a hiring decision/i)).toBeInTheDocument();
+  });
+
   it("keeps the previous report visible and blocks export while updating", async () => {
     getFitGapMock.mockResolvedValue({
       data: { report: { ...report, generation_status: "generating", freshness: "updating" } },

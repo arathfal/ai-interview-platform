@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -9,6 +10,7 @@ import { sessionsApi } from "@/services/sessions";
 import { vacanciesApi } from "@/services/vacancies";
 import { portfoliosApi } from "@/services/portfolios";
 import { extractApiError } from "@/lib/apiErrors";
+import { parseLevel } from "@/utils/constants";
 import { toast } from "@/stores/toastStore";
 import { usePolling } from "@/hooks/usePolling";
 import {
@@ -20,8 +22,11 @@ import {
   FileText,
   AlertTriangle,
   Pencil,
+  Gauge,
+  ListChecks,
+  ShieldCheck,
 } from "lucide-react";
-import type { Portfolio, AssessorOverride, Vacancy } from "@/types";
+import type { Portfolio, AssessorOverride, PaginationMeta, Vacancy } from "@/types";
 
 export default function PortfolioPage() {
   const { id, sessionId } = useParams<{ id: string; sessionId: string }>();
@@ -31,6 +36,7 @@ export default function PortfolioPage() {
   const [loading, setLoading] = useState(true);
   const [overrides, setOverrides] = useState<Record<number, AssessorOverride>>({});
   const [vacancies, setVacancies] = useState<Vacancy[]>([]);
+  const [vacancyMeta, setVacancyMeta] = useState<PaginationMeta | null>(null);
   const [selectedVacancy, setSelectedVacancy] = useState<string>("");
   const [exporting, setExporting] = useState<"pdf" | "json" | null>(null);
   const [candidateName, setCandidateName] = useState<string | null>(null);
@@ -39,40 +45,67 @@ export default function PortfolioPage() {
   const missingCoverage = portfolio?.failure_reason === "missing_coverage";
   const configurationError = missingAssessmentSkills || missingCoverage;
 
-  const fetchPortfolio = useCallback(async () => {
-    try {
-      const res = await sessionsApi.getPortfolio(Number(sessionId));
-      const data = res.data as any;
-      if (data.status === "generating" || data.portfolio?.generation_status === "generating" || data.portfolio?.generation_status === "pending") {
+  const applyPortfolioResponse = useCallback(
+    (data: { portfolio: Portfolio } | { status: string }) => {
+      if (
+        ("status" in data && data.status === "generating") ||
+        ("portfolio" in data &&
+          (data.portfolio.generation_status === "generating" ||
+            data.portfolio.generation_status === "pending"))
+      ) {
         setGenerating(true);
-      } else if (data.portfolio) {
+        return;
+      }
+
+      if ("portfolio" in data) {
         setPortfolio(data.portfolio);
         setGenerating(false);
-        // Build overrides map
-        const overrideMap: Record<number, AssessorOverride> = {};
-        data.portfolio.overrides.forEach((o: AssessorOverride) => {
-          overrideMap[o.portfolio_skill_id] = o;
-        });
-        setOverrides(overrideMap);
+        setOverrides(
+          Object.fromEntries(
+            data.portfolio.overrides.map((override) => [override.portfolio_skill_id, override])
+          )
+        );
       }
-    } catch (e) {
-      if (!loadError) setLoadError(extractApiError(e).message);
+    },
+    []
+  );
+
+  const fetchPortfolio = useCallback(async () => {
+    try {
+      const response = await sessionsApi.getPortfolio(Number(sessionId));
+      applyPortfolioResponse(response.data);
+    } catch (error) {
       setGenerating(false);
+      setLoadError(extractApiError(error).message);
     }
-  }, [sessionId, loadError]);
+  }, [applyPortfolioResponse, sessionId]);
+
+  const loadPage = useCallback(async () => {
+    setLoadError(null);
+    setLoading(true);
+
+    try {
+      const [portfolioResponse, vacancyResponse, sessionResponse] = await Promise.all([
+        sessionsApi.getPortfolio(Number(sessionId)),
+        vacanciesApi.list({ page: 1, perPage: 100 }),
+        sessionsApi.get(Number(sessionId)),
+      ]);
+
+      applyPortfolioResponse(portfolioResponse.data);
+      setVacancies(vacancyResponse.data.vacancies);
+      setVacancyMeta(vacancyResponse.data.meta ?? null);
+      setCandidateName(sessionResponse.data.session.candidate_name ?? null);
+    } catch (error) {
+      setLoadError(extractApiError(error).message);
+      setGenerating(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [applyPortfolioResponse, sessionId]);
 
   useEffect(() => {
-    Promise.all([fetchPortfolio(), vacanciesApi.list(), sessionsApi.get(Number(sessionId))])
-      .then(([, vRes, sRes]) => {
-        setVacancies(vRes.data.vacancies);
-        setCandidateName(sRes.data.session.candidate_name ?? null);
-      })
-      .catch((e) => {
-        // F-26: no silent catch — a failed load must tell the assessor why.
-        setLoadError(extractApiError(e).message);
-      })
-      .finally(() => setLoading(false));
-  }, [fetchPortfolio, sessionId]);
+    void loadPage();
+  }, [loadPage]);
 
   // Poll while generating
   usePolling(fetchPortfolio, 5000, generating);
@@ -121,6 +154,26 @@ export default function PortfolioPage() {
     }
   };
 
+  const configuredSkillCount = portfolio?.skills.filter((skill) => !skill.is_discovered).length ?? 0;
+  const discoveredSkillCount = portfolio?.skills.filter((skill) => skill.is_discovered).length ?? 0;
+  const skillCount = portfolio?.skills.length ?? 0;
+  const averageLevel =
+    skillCount === 0
+      ? 0
+      : (portfolio?.skills.reduce(
+          (total, skill) =>
+            total + (overrides[skill.id]?.override_level ?? parseLevel(skill.ai_level)),
+          0
+        ) ?? 0) / skillCount;
+  const levelEstimatePercentage = Math.round((averageLevel / 5) * 100);
+  const mediumHighConfidenceCount =
+    portfolio?.skills.filter((skill) =>
+      ["medium", "high"].includes(skill.ai_confidence?.toLowerCase())
+    ).length ?? 0;
+  const confidencePercentage =
+    skillCount === 0 ? 0 : Math.round((mediumHighConfidenceCount / skillCount) * 100);
+  const vacancyOptionsTruncated = (vacancyMeta?.total_count ?? vacancies.length) > vacancies.length;
+
   if (loading) {
     return (
       <div className="max-w-2xl mx-auto space-y-4">
@@ -131,62 +184,64 @@ export default function PortfolioPage() {
     );
   }
 
-  return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      {/* Load failure state with retry (F-26) */}
-      {loadError && (
-        <div role="alert" className="border border-destructive/40 rounded-lg p-10 text-center space-y-3 animate-in fade-in duration-200">
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <div
+          role="alert"
+          className="space-y-3 rounded-lg border border-destructive/40 p-10 text-center animate-in fade-in duration-200"
+        >
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
             <AlertTriangle className="h-6 w-6" aria-hidden="true" />
           </div>
           <div>
-            <p className="text-sm font-semibold">Couldn't load this portfolio</p>
-            <p className="text-sm text-muted-foreground mt-1">{loadError}</p>
+            <h1 className="text-base font-semibold">Couldn't load this portfolio</h1>
+            <p className="mt-1 break-words text-sm text-muted-foreground">{loadError}</p>
           </div>
-          <div className="flex items-center justify-center gap-2 pt-1">
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            <Button size="sm" onClick={() => void loadPage()}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Retry
+            </Button>
             <Button
               size="sm"
-              onClick={() => {
-                setLoadError(null);
-                setLoading(true);
-                Promise.all([fetchPortfolio(), vacanciesApi.list(), sessionsApi.get(Number(sessionId))])
-                  .then(([, vRes, sRes]) => {
-                    setVacancies(vRes.data.vacancies);
-                    setCandidateName(sRes.data.session.candidate_name ?? null);
-                  })
-                  .catch((e) => setLoadError(extractApiError(e).message))
-                  .finally(() => setLoading(false));
-              }}
+              variant="outline"
+              onClick={() => navigate(`/assessments/${id}/invite`)}
             >
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
-            </Button>
-            <Button size="sm" variant="outline" onClick={() => navigate(`/assessments/${id}/invite`)}>
-              <ArrowLeft className="h-3.5 w-3.5 mr-1.5" /> Back
+              <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Back
             </Button>
           </div>
         </div>
-      )}
+      </div>
+    );
+  }
 
+  return (
+    <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="flex items-center gap-2">
-          <Link to={`/assessments/${id}/invite`} className="text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="h-4 w-4" />
+        <div className="flex min-w-0 items-start gap-2">
+          <Link
+            to={`/assessments/${id}/invite`}
+            aria-label="Back to assessment"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           </Link>
-          <div>
+          <div className="min-w-0 pt-1">
             <h1 className="text-lg font-semibold">Portfolio Results</h1>
             {candidateName && (
-              <p className="text-sm text-muted-foreground">{candidateName}</p>
+              <p className="break-words text-sm text-muted-foreground">{candidateName}</p>
             )}
+            {generating && <p className="mt-1 text-xs text-muted-foreground">Generating</p>}
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 md:justify-end">
           <Link
             to={`/assessments/${id}/sessions/${sessionId}/transcript`}
-            className="inline-flex items-center gap-1 text-sm border rounded-md px-3 py-1.5 hover:bg-accent transition-colors"
+            className="inline-flex h-8 items-center gap-1 rounded-md border px-3 text-sm transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
           >
-            <FileText className="h-3.5 w-3.5" />
+            <FileText className="h-3.5 w-3.5" aria-hidden="true" />
             Transcript
           </Link>
           {!generating && portfolio?.generation_status === "complete" && (
@@ -197,7 +252,7 @@ export default function PortfolioPage() {
                 onClick={() => handleExport("pdf")}
                 disabled={!!exporting}
               >
-                {exporting === "pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                {exporting === "pdf" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Download className="h-3.5 w-3.5 mr-1" aria-hidden="true" />}
                 PDF
               </Button>
               <Button
@@ -206,7 +261,7 @@ export default function PortfolioPage() {
                 onClick={() => handleExport("json")}
                 disabled={!!exporting}
               >
-                {exporting === "json" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5 mr-1" />}
+                {exporting === "json" ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : <Download className="h-3.5 w-3.5 mr-1" aria-hidden="true" />}
                 JSON
               </Button>
             </>
@@ -217,15 +272,68 @@ export default function PortfolioPage() {
       {/* Generating state */}
       {generating && (
         <div className="border rounded-lg p-12 text-center space-y-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" aria-hidden="true" />
           <div>
-            <p className="font-medium">Generating portfolio...</p>
+            <p className="font-medium">Generating portfolio…</p>
             <p className="text-sm text-muted-foreground mt-1">
               The AI is analyzing the interview transcript. This takes about 2 minutes.
             </p>
           </div>
         </div>
       )}
+
+      {!generating &&
+        (portfolio?.generation_status === "complete" ||
+          portfolio?.generation_status === "partial") && (
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Portfolio skill summary">
+            <div
+              aria-label={`Level estimate: ${levelEstimatePercentage}%`}
+              className="rounded-lg border border-violet-200 bg-violet-50 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-violet-700">
+                <Gauge className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Level estimate</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-violet-950">
+                {levelEstimatePercentage}%
+              </p>
+              <p className="mt-1 text-xs text-violet-800/75">
+                Average L{averageLevel.toFixed(1)} of L5
+              </p>
+            </div>
+            <div
+              aria-label={`Confidence estimate: ${confidencePercentage}%`}
+              className="rounded-lg border border-teal-200 bg-teal-50 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-teal-700">
+                <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Confidence</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-teal-950">
+                {confidencePercentage}%
+              </p>
+              <p className="mt-1 text-xs text-teal-800/75">
+                {mediumHighConfidenceCount} of {skillCount} medium or high
+              </p>
+            </div>
+            <div
+              aria-label={`Skills assessed: ${skillCount}`}
+              className="rounded-lg border border-sky-200 bg-sky-50 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-sky-700">
+                <ListChecks className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Skills assessed</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-sky-950">{skillCount}</p>
+              <p className="mt-1 text-xs text-sky-800/75">
+                {configuredSkillCount} configured · {discoveredSkillCount} discovered
+              </p>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground sm:col-span-3">
+              Directional estimate only. Skills are weighted equally; this is not a hiring score.
+            </p>
+          </div>
+        )}
 
       {/* Failed state */}
       {!generating && portfolio?.generation_status === "failed" && (
@@ -317,7 +425,7 @@ export default function PortfolioPage() {
               <div className="space-y-3">
                 <div>
                   <h2 className="text-sm font-semibold flex items-center gap-1.5">
-                    <Zap className="h-4 w-4 text-amber-500" />
+                    <Zap className="h-4 w-4 text-amber-500" aria-hidden="true" />
                     Discovered Skills
                   </h2>
                   <p className="text-xs text-muted-foreground">
@@ -344,29 +452,53 @@ export default function PortfolioPage() {
               <Separator />
 
               {/* Fit/Gap */}
-              <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
-                <Select value={selectedVacancy} onValueChange={setSelectedVacancy}>
-                  <SelectTrigger className="w-full md:w-56">
-                    <SelectValue placeholder="Choose vacancy..." />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {vacancies.length === 0 ? (
-                      <SelectItem value="__no_vacancies__" disabled>
-                        No vacancies available
-                      </SelectItem>
-                    ) : (
-                      vacancies.map((v) => (
-                        <SelectItem key={v.id} value={String(v.id)}>
-                          {v.role_title}
-                        </SelectItem>
-                      ))
-                    )}
-                  </SelectContent>
-                </Select>
-                <Button onClick={handleRunFitGap} disabled={!selectedVacancy}>
-                  Run Fit/Gap Analysis →
-                </Button>
-              </div>
+              <Card>
+                <CardHeader className="space-y-1 p-4 pb-3">
+                  <CardTitle className="text-base">Compare Against a Vacancy</CardTitle>
+                  <CardDescription>
+                    Compare this candidate portfolio with the skills and expectations configured for
+                    a vacancy.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3 p-4 pt-0">
+                  <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+                    <Select
+                      value={selectedVacancy}
+                      onValueChange={setSelectedVacancy}
+                      disabled={vacancies.length === 0}
+                    >
+                      <SelectTrigger className="min-w-0 flex-1">
+                        <SelectValue
+                          placeholder={
+                            vacancies.length === 0 ? "No vacancies available" : "Choose a vacancy"
+                          }
+                        />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {vacancies.map((vacancy) => (
+                          <SelectItem key={vacancy.id} value={String(vacancy.id)}>
+                            {vacancy.role_title}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      className="shrink-0"
+                      onClick={handleRunFitGap}
+                      disabled={!selectedVacancy}
+                    >
+                      Run Fit/Gap Analysis →
+                    </Button>
+                  </div>
+                  {vacancyOptionsTruncated && (
+                    <p className="text-xs text-muted-foreground" role="note">
+                      Showing the first {vacancies.length} of{" "}
+                      {new Intl.NumberFormat().format(vacancyMeta?.total_count ?? vacancies.length)}{" "}
+                      vacancies. Vacancy search is not available yet.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             </>
           )}
         </>

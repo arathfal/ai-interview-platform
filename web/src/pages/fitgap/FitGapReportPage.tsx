@@ -17,9 +17,22 @@ import {
 import ComparisonTable from "@/components/fitgap/ComparisonTable";
 import { portfoliosApi } from "@/services/portfolios";
 import { sessionsApi } from "@/services/sessions";
+import { vacanciesApi } from "@/services/vacancies";
+import { extractApiError } from "@/lib/apiErrors";
+import { getComparisonResult } from "@/utils/fitGap";
 import { usePolling } from "@/hooks/usePolling";
-import { ArrowLeft, AlertTriangle, CheckCircle, Download, Loader2, RefreshCw, Zap } from "lucide-react";
-import type { FitGapReport, Portfolio } from "@/types";
+import {
+  ArrowLeft,
+  AlertTriangle,
+  CheckCircle,
+  Download,
+  Loader2,
+  RefreshCw,
+  Target,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import type { FitGapReport, Portfolio, Vacancy } from "@/types";
 
 export default function FitGapReportPage() {
   const { id, sessionId, vacancyId } = useParams<{
@@ -30,7 +43,12 @@ export default function FitGapReportPage() {
 
   const [report, setReport] = useState<FitGapReport | null>(null);
   const [portfolio, setPortfolio] = useState<Portfolio | null>(null);
+  const [vacancy, setVacancy] = useState<Vacancy | null>(null);
+  const [candidateName, setCandidateName] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [reportLoading, setReportLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [reportError, setReportError] = useState<string | null>(null);
   const [exporting, setExporting] = useState<"pdf" | "json" | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [pendingStaleExport, setPendingStaleExport] = useState<"pdf" | "json" | null>(null);
@@ -39,30 +57,52 @@ export default function FitGapReportPage() {
 
   const fetchReport = useCallback(async () => {
     if (!portfolio) return;
+    setReportError(null);
     try {
       const res = await portfoliosApi.getFitGap(portfolio.id, Number(vacancyId));
       setReport(res.data.report);
-    } catch (e: any) {
-      if (e?.response?.status === 404) {
+    } catch (error: unknown) {
+      const normalizedError = extractApiError(error);
+      if (normalizedError.status === 404) {
         try {
           const res = await portfoliosApi.triggerFitGap(portfolio.id, Number(vacancyId));
           if ("report" in res.data) setReport(res.data.report);
-        } catch {}
+        } catch (triggerError) {
+          setReportError(extractApiError(triggerError).message);
+        }
+      } else {
+        setReportError(normalizedError.message);
       }
+    } finally {
+      setReportLoading(false);
     }
   }, [portfolio, vacancyId]);
 
+  const loadContext = useCallback(async () => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const [portfolioResponse, vacancyResponse, sessionResponse] = await Promise.all([
+        sessionsApi.getPortfolio(Number(sessionId)),
+        vacanciesApi.get(Number(vacancyId)),
+        sessionsApi.get(Number(sessionId)),
+      ]);
+      if (!("portfolio" in portfolioResponse.data)) {
+        throw new Error("The candidate portfolio is not ready yet.");
+      }
+      setPortfolio(portfolioResponse.data.portfolio);
+      setVacancy(vacancyResponse.data.vacancy);
+      setCandidateName(sessionResponse.data.session.candidate_name ?? null);
+    } catch (error) {
+      setLoadError(extractApiError(error).message);
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId, vacancyId]);
+
   useEffect(() => {
-    sessionsApi
-      .getPortfolio(Number(sessionId))
-      .then(async (res) => {
-        const data = res.data as any;
-        if (data.portfolio) {
-          setPortfolio(data.portfolio);
-        }
-      })
-      .finally(() => setLoading(false));
-  }, [sessionId]);
+    void loadContext();
+  }, [loadContext]);
 
   useEffect(() => {
     if (portfolio) fetchReport();
@@ -87,9 +127,12 @@ export default function FitGapReportPage() {
   const handleRegenerate = async () => {
     if (!portfolio) return;
     setRegenerating(true);
+    setReportError(null);
     try {
       const res = await portfoliosApi.regenerateFitGap(portfolio.id, Number(vacancyId));
       setReport(res.data.report);
+    } catch (error) {
+      setReportError(extractApiError(error).message);
     } finally {
       setRegenerating(false);
     }
@@ -126,6 +169,27 @@ export default function FitGapReportPage() {
   const hasCompletedReport = report?.has_completed_report ?? false;
   const initialGeneration = report?.freshness === "updating" && !hasCompletedReport;
   const exportBlocked = !report || !hasCompletedReport || report.freshness === "updating" || report.freshness === "outdated";
+  const assessedComparisons =
+    report?.skill_comparisons.filter(
+      (comparison) => getComparisonResult(comparison) !== "not_assessed"
+    ) ?? [];
+  const meetsOrExceedsCount = assessedComparisons.filter(
+    (comparison) => {
+      const result = getComparisonResult(comparison);
+      return result === "match" || result === "exceed";
+    }
+  ).length;
+  const gapCount = assessedComparisons.filter(
+    (comparison) => getComparisonResult(comparison) === "gap"
+  ).length;
+  const notAssessedCount =
+    report?.skill_comparisons.filter(
+      (comparison) => getComparisonResult(comparison) === "not_assessed"
+    ).length ?? 0;
+  const roleFitPercentage =
+    assessedComparisons.length === 0
+      ? null
+      : Math.round((meetsOrExceedsCount / assessedComparisons.length) * 100);
 
   const freshnessPresentation = report && {
     current: {
@@ -161,19 +225,54 @@ export default function FitGapReportPage() {
     );
   }
 
+  if (loadError) {
+    return (
+      <div className="mx-auto max-w-2xl">
+        <div
+          role="alert"
+          className="space-y-3 rounded-lg border border-destructive/40 p-10 text-center"
+        >
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-red-50 text-red-600">
+            <AlertTriangle className="h-6 w-6" aria-hidden="true" />
+          </div>
+          <div>
+            <h1 className="text-base font-semibold">Couldn't load this Fit/Gap report</h1>
+            <p className="mt-1 break-words text-sm text-muted-foreground">{loadError}</p>
+          </div>
+          <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+            <Button size="sm" onClick={() => void loadContext()}>
+              <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Retry
+            </Button>
+            <Button variant="outline" size="sm" asChild>
+              <Link to={`/assessments/${id}/sessions/${sessionId}/portfolio`}>
+                <ArrowLeft className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Back to portfolio
+              </Link>
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-2xl mx-auto space-y-6">
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2">
-            <Link
-              to={`/assessments/${id}/sessions/${sessionId}/portfolio`}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="h-4 w-4" />
-            </Link>
+        <div className="flex min-w-0 items-start gap-2">
+          <Link
+            to={`/assessments/${id}/sessions/${sessionId}/portfolio`}
+            aria-label="Back to portfolio"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          </Link>
+          <div className="min-w-0 pt-1">
             <h1 className="text-lg font-semibold">Fit/Gap Report</h1>
+            {(candidateName || vacancy) && (
+              <p className="break-words text-sm text-muted-foreground">
+                {[candidateName, vacancy?.role_title].filter(Boolean).join(" · ")}
+              </p>
+            )}
           </div>
         </div>
 
@@ -214,17 +313,88 @@ export default function FitGapReportPage() {
 
       {exportError && <p className="text-sm text-destructive" role="alert">{exportError}</p>}
 
+      {reportError && (
+        <div
+          role="alert"
+          className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-red-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+        >
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-red-900">Couldn't update the Fit/Gap report</p>
+            <p className="mt-0.5 break-words text-xs text-red-800/80">{reportError}</p>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="shrink-0 bg-background"
+            onClick={() => {
+              setReportLoading(true);
+              void fetchReport();
+            }}
+          >
+            <RefreshCw className="mr-1.5 h-3.5 w-3.5" aria-hidden="true" /> Retry
+          </Button>
+        </div>
+      )}
+
       {/* Generating */}
-      {initialGeneration && (
+      {(reportLoading || initialGeneration || (!report && !reportError)) && (
         <div className="border rounded-lg p-12 text-center space-y-3">
-          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" />
-          <p className="text-sm text-muted-foreground">Generating fit/gap report...</p>
+          <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto" aria-hidden="true" />
+          <p className="text-sm text-muted-foreground">Generating Fit/Gap report…</p>
         </div>
       )}
 
       {/* Report ready */}
       {report && hasCompletedReport && (
         <>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3" aria-label="Fit/Gap summary">
+            <div
+              aria-label={`Role fit estimate: ${roleFitPercentage ?? "not available"}`}
+              className="rounded-lg border border-violet-200 bg-violet-50 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-violet-700">
+                <Target className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Role fit</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-violet-950">
+                {roleFitPercentage === null ? "—" : `${roleFitPercentage}%`}
+              </p>
+              <p className="mt-1 text-xs text-violet-800/75">
+                {meetsOrExceedsCount} of {assessedComparisons.length} assessed requirements
+              </p>
+            </div>
+            <div
+              aria-label={`Meets or exceeds: ${meetsOrExceedsCount}`}
+              className="rounded-lg border border-emerald-200 bg-emerald-50 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-emerald-700">
+                <TrendingUp className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Meets / exceeds</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-emerald-950">
+                {meetsOrExceedsCount}
+              </p>
+              <p className="mt-1 text-xs text-emerald-800/75">At or above vacancy level</p>
+            </div>
+            <div
+              aria-label={`Skill gaps: ${gapCount}`}
+              className="rounded-lg border border-amber-200 bg-amber-50 p-3.5"
+            >
+              <div className="flex items-center gap-2 text-amber-700">
+                <AlertTriangle className="h-4 w-4" aria-hidden="true" />
+                <span className="text-xs font-semibold uppercase tracking-wide">Skill gaps</span>
+              </div>
+              <p className="mt-2 text-2xl font-bold tabular-nums text-amber-950">{gapCount}</p>
+              <p className="mt-1 text-xs text-amber-800/75">
+                {notAssessedCount > 0 ? `${notAssessedCount} not assessed` : "All requirements assessed"}
+              </p>
+            </div>
+            <p className="text-xs leading-relaxed text-muted-foreground sm:col-span-3">
+              Role fit is the share of assessed vacancy requirements that the candidate meets or
+              exceeds. It excludes unassessed skills and is not a hiring decision.
+            </p>
+          </div>
+
           {/* Skill comparison */}
           <Card>
             <CardHeader className="pb-3">
