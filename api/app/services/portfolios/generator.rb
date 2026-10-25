@@ -88,7 +88,9 @@ module Portfolios
         discovered: coverage_maps.select(&:is_discovered).map { |m| coverage_json(m) }
       }.to_json
 
-      transcript_text = turns.map { |t| "[#{t.speaker.upcase}]: #{t.text}" }.join("\n")
+      transcript_text = turns.map do |turn|
+        "[TURN #{turn.turn_number}][#{turn.speaker.upcase}]: #{turn.text}"
+      end.join("\n")
 
       <<~PROMPT
         You are evaluating a completed skills assessment interview to produce a structured skill portfolio.
@@ -120,6 +122,8 @@ module Portfolios
         1. FIND THE EVIDENCE
            Read all transcript turns where this skill was discussed.
            Identify the 2-3 most revealing quotes from the CANDIDATE (not the AI).
+           For each quote, include the explicit TURN number shown in the transcript.
+           Copy the candidate's words exactly; do not paraphrase or invent evidence.
            A quote is revealing if it shows HOW they think, not just WHAT they know.
 
         2. ASSIGN A LEVEL
@@ -144,7 +148,9 @@ module Portfolios
               "skill_label": "React / Frontend Development",
               "level": 3,
               "confidence": "high",
-              "evidence": ["quote 1", "quote 2", "quote 3"],
+              "evidence": [
+                { "turn_number": 14, "quote": "exact candidate excerpt" }
+              ],
               "competency_summary": "2-3 sentence summary"
             }
           ],
@@ -153,7 +159,9 @@ module Portfolios
               "skill_label": "Micro-frontend Architecture",
               "level": 2,
               "confidence": "low",
-              "evidence": ["quote 1"],
+              "evidence": [
+                { "turn_number": 21, "quote": "exact candidate excerpt" }
+              ],
               "competency_summary": "2-3 sentence summary"
             }
           ]
@@ -219,7 +227,7 @@ module Portfolios
           is_discovered:      false,
           ai_level:           skill_data['level'].to_i.clamp(1, 5),
           ai_confidence:      normalize_confidence(skill_data['confidence']),
-          evidence:           Array(skill_data['evidence']).first(3),
+          evidence:           validated_evidence(skill_data),
           competency_summary: skill_data['competency_summary']
         }
       end
@@ -231,12 +239,26 @@ module Portfolios
           is_discovered:      true,
           ai_level:           skill_data['level'].to_i.clamp(1, 5),
           ai_confidence:      normalize_confidence(skill_data['confidence']),
-          evidence:           Array(skill_data['evidence']).first(3),
+          evidence:           validated_evidence(skill_data),
           competency_summary: skill_data['competency_summary']
         }
       end
 
       configured + discovered
+    end
+
+    def validated_evidence(skill_data)
+      result = evidence_validator.call(skill_data['evidence'])
+      if result[:rejections].any?
+        Rails.logger.warn(
+          "Portfolio evidence rejected for session #{@session.id}: #{result[:rejections].map { |reason, count| "#{reason}=#{count}" }.join(', ')}"
+        )
+      end
+      result[:citations]
+    end
+
+    def evidence_validator
+      @evidence_validator ||= EvidenceValidator.new(session: @session)
     end
 
     # Maps arbitrary LLM confidence output onto the confidence_level enum

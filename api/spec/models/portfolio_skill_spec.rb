@@ -3,6 +3,33 @@
 require 'rails_helper'
 
 RSpec.describe PortfolioSkill, type: :model do
+  describe 'evidence compatibility' do
+    subject(:skill) { described_class.new(evidence:) }
+
+    context 'with legacy strings' do
+      let(:evidence) { ['Detached historical quote'] }
+
+      it 'keeps the text readable without claiming transcript verification' do
+        expect(skill.evidence_items).to eq([{
+          'quote' => 'Detached historical quote',
+          'turn_id' => nil,
+          'turn_number' => nil,
+          'verification_status' => 'legacy'
+        }])
+        expect(skill.evidence_status).to eq('legacy')
+      end
+    end
+
+    context 'with malformed structured evidence' do
+      let(:evidence) { [{ 'quote' => 'Unvalidated model text', 'verification_status' => 'unverified' }] }
+
+      it 'does not expose the model text as candidate evidence' do
+        expect(skill.evidence_items).to be_empty
+        expect(skill.evidence_status).to eq('insufficient')
+      end
+    end
+  end
+
   describe 'tenant scoping (F-01 fix)' do
     let(:org_alpha) do
       Organization.create!(
