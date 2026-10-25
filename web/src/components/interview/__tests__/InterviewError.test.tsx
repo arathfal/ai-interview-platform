@@ -53,4 +53,16 @@ describe("InterviewError", () => {
 
     expect(screen.getByRole("heading", { name: "Interview isn't ready yet" })).toBeInTheDocument();
   });
+
+  it("shows a recoverable microphone-specific failure", () => {
+    render(
+      <InterviewError
+        error={{ kind: "microphone_unavailable", recoverable: true }}
+        onRetry={vi.fn()}
+      />
+    );
+
+    expect(screen.getByRole("heading", { name: "Microphone disconnected" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Try again/i })).toBeInTheDocument();
+  });
 });
