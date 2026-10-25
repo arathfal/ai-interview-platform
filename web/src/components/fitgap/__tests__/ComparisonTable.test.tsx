@@ -48,6 +48,7 @@ describe("ComparisonTable", () => {
     expect(within(reactRow!).getByText("L4")).toBeInTheDocument();
     expect(within(reactRow!).getByText("L3")).toBeInTheDocument();
     expect(within(reactRow!).getByText("Assessor-adjusted from L2")).toBeInTheDocument();
+    expect(within(reactRow!).getByText("high confidence")).toBeInTheDocument();
 
     const databaseRow = screen.getByText("Database").closest("tr");
     expect(databaseRow).not.toBeNull();
@@ -58,9 +59,36 @@ describe("ComparisonTable", () => {
     expect(within(systemRow!).getByText(/Not assessed/)).toBeInTheDocument();
   });
 
+  it("prioritizes gaps before matches and unassessed skills", () => {
+    render(<ComparisonTable comparisons={[comparisons[1], comparisons[2], comparisons[0]]} />);
+
+    const rows = screen.getAllByRole("row").slice(1);
+    expect(within(rows[0]).getByText("React")).toBeInTheDocument();
+    expect(within(rows[1]).getByText("System Design")).toBeInTheDocument();
+    expect(within(rows[2]).getByText("Database")).toBeInTheDocument();
+  });
+
   it("renders an explicit empty state", () => {
     render(<ComparisonTable comparisons={[]} />);
 
     expect(screen.getByText("No matching skills for this vacancy")).toBeInTheDocument();
+  });
+
+  it("keeps legacy fit_result comparisons readable", () => {
+    render(
+      <ComparisonTable
+        comparisons={[
+          {
+            skill_label: "Legacy Rails",
+            fit_result: "match",
+            note: "Evidence strongly supports this role.",
+          },
+        ]}
+      />
+    );
+
+    const row = screen.getByText("Legacy Rails").closest("tr");
+    expect(row).not.toBeNull();
+    expect(within(row!).getByText(/Match/)).toBeInTheDocument();
   });
 });

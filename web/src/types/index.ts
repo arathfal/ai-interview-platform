@@ -139,13 +139,15 @@ export type SkillComparisonResult = "match" | "gap" | "exceed" | "not_assessed";
 export interface SkillComparison {
   skill_id?: string | null;
   skill_label: string;
-  expected_level: number;
+  expected_level?: number;
   candidate_level?: number | null;
   ai_level?: number | null;
   rating_source?: "ai" | "assessor_override" | null;
-  result: SkillComparisonResult;
+  result?: SkillComparisonResult;
+  fit_result?: SkillComparisonResult;
   delta?: number | null;
   confidence?: "high" | "medium" | "low" | null;
+  note?: string | null;
 }
 
 export type FitGapFreshness = "current" | "updating" | "outdated" | "failed";
