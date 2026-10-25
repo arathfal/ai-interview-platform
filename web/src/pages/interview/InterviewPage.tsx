@@ -30,6 +30,7 @@ import type {
   InterviewSpeaker,
   TranscriptTurn,
 } from "@/types";
+import type { VerifiedMicrophone } from "@/types/audio";
 
 export default function InterviewPage() {
   const { token } = useParams<{ token: string }>();
@@ -49,6 +50,8 @@ export default function InterviewPage() {
   const connectionLostTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [micMuted, setMicMuted] = useState(false);
   const micMutedRef = useRef(false);
+  const verifiedMicrophoneRef = useRef<VerifiedMicrophone | null>(null);
+  const [microphoneNotice, setMicrophoneNotice] = useState<string | null>(null);
 
   // Fetch candidate info. A failed fetch here must NOT be presented as a
   // successful interview — surface a truthful error screen instead (F-07).
@@ -139,7 +142,6 @@ export default function InterviewPage() {
         connectionLostTimerRef.current = null;
       }
       setConnectionLostLong(false);
-      if (state === "active" && !micMutedRef.current) unmuteRef.current?.();
     }
   }, []);
 
@@ -207,6 +209,7 @@ export default function InterviewPage() {
 
   const stopCaptureRef = useRef<(() => void) | null>(null);
   const stopPlaybackRef = useRef<(() => void) | null>(null);
+  const disconnectRef = useRef<(() => void) | null>(null);
 
   const handleTiming = useCallback((timing: { deadlineAt: string; remainingSeconds: number }) => {
     setDeadlineAt(timing.deadlineAt);
@@ -217,6 +220,18 @@ export default function InterviewPage() {
     stopCaptureRef.current?.();
     stopPlaybackRef.current?.();
     setSpeaker(null);
+  }, []);
+
+  const handleCaptureError = useCallback((error: Error) => {
+    setInterviewError({
+      kind: "microphone_unavailable",
+      message: error.message,
+      recoverable: true,
+    });
+    setInterviewState("error");
+    stopCaptureRef.current?.();
+    stopPlaybackRef.current?.();
+    disconnectRef.current?.();
   }, []);
 
   const { connect, send, sendJson, disconnect, connectionState } = useAudioWebSocket({
@@ -234,10 +249,12 @@ export default function InterviewPage() {
 
   const { start: startCapture, stop: stopCapture, mute, unmute } = useAudioCapture({
     onFrame: send,
+    onError: handleCaptureError,
   });
 
   stopCaptureRef.current = stopCapture;
   stopPlaybackRef.current = stopPlayback;
+  disconnectRef.current = disconnect;
 
   muteRef.current = mute;
   unmuteRef.current = unmute;
@@ -246,24 +263,49 @@ export default function InterviewPage() {
     if (micMutedRef.current) {
       micMutedRef.current = false;
       setMicMuted(false);
-      unmute();
+      if (speaker === "candidate") unmute();
     } else {
       micMutedRef.current = true;
       setMicMuted(true);
       mute();
     }
-  }, [mute, unmute]);
+  }, [mute, speaker, unmute]);
 
-  const startInterview = useCallback(async () => {
+  const startInterview = useCallback(async (verified?: VerifiedMicrophone) => {
     if (!sessionId) return;
+    const microphone = verified ?? verifiedMicrophoneRef.current ?? undefined;
+    // Close the gate before either the WebSocket or worklet can emit a frame.
+    mute();
+    setSpeaker(null);
+    setMicrophoneNotice(null);
     setInterviewState("connecting");
     connect();
-    await startCapture();
-    // Start muted — only unmute when backend sends speaker_changed: candidate.
-    // This prevents mic audio from being sent during AI speech, since separate
-    // AudioContexts for capture/playback break the browser's echo cancellation.
-    muteRef.current?.();
-  }, [sessionId, connect, startCapture]);
+    try {
+      const result = await startCapture(microphone);
+      verifiedMicrophoneRef.current = null;
+      if (result.source === "cancelled") {
+        disconnect();
+        return;
+      }
+      if (result.source === "fallback") {
+        const device = result.label ? ` (${result.label})` : "";
+        setMicrophoneNotice(
+          result.deviceChanged
+            ? `The verified microphone disconnected. Your browser switched to another input${device}.`
+            : `The verified microphone stream ended, so the browser reconnected it${device}.`
+        );
+      }
+    } catch {
+      verifiedMicrophoneRef.current = null;
+      disconnect();
+    }
+  }, [connect, disconnect, mute, sessionId, startCapture]);
+
+  const handleHardwareStart = useCallback((microphone: VerifiedMicrophone) => {
+    verifiedMicrophoneRef.current = microphone;
+    setHardwareCheckDone(true);
+    void startInterview(microphone);
+  }, [startInterview]);
 
   const endInterview = useCallback(async () => {
     setInterviewState("ending");
@@ -308,7 +350,7 @@ export default function InterviewPage() {
               <p>• The session will last up to {candidateInfo?.time_limit_min ?? "—"} minutes.</p>
               <p>• Your mic will be active throughout. You can end anytime.</p>
             </div>
-            <HardwareCheck onStart={() => { setHardwareCheckDone(true); startInterview(); }} />
+            <HardwareCheck onStart={handleHardwareStart} />
           </div>
         ) : (
           <div className="space-y-4">
@@ -316,7 +358,7 @@ export default function InterviewPage() {
               <CheckCircle className="h-4 w-4 shrink-0" />
               <span>Hardware checks passed. You're ready to start.</span>
             </div>
-            <Button className="w-full" size="lg" onClick={startInterview}>
+            <Button className="w-full" size="lg" onClick={() => void startInterview()}>
               <Mic className="h-4 w-4 mr-2" />
               Start Interview
             </Button>
@@ -359,7 +401,7 @@ export default function InterviewPage() {
           </div>
         )}
 
-        <Button className="w-full" size="lg" onClick={startInterview}>
+        <Button className="w-full" size="lg" onClick={() => void startInterview()}>
           <Mic className="h-4 w-4 mr-2" />
           Resume interview
         </Button>
@@ -405,6 +447,10 @@ export default function InterviewPage() {
             setInterviewError(null);
             setTranscript([]);
             setSpeaker(null);
+            if (interviewError?.kind === "microphone_unavailable") {
+              verifiedMicrophoneRef.current = null;
+              setHardwareCheckDone(false);
+            }
             setInterviewState("idle");
           }
         }}
@@ -450,6 +496,12 @@ export default function InterviewPage() {
       {restoredTranscript && (
         <p role="status" aria-live="polite" className="sr-only">
           Recent conversation restored. Previous audio was not replayed.
+        </p>
+      )}
+
+      {microphoneNotice && (
+        <p role="status" className="text-sm bg-amber-50 border border-amber-200 text-amber-800 rounded-lg px-4 py-2.5 mt-2">
+          {microphoneNotice}
         </p>
       )}
 

@@ -40,6 +40,12 @@ export default function InterviewError({ error, onRetry }: InterviewErrorProps) 
         error.message ??
         "The prior conversation context is unavailable. Please contact the interviewer before continuing.";
       break;
+    case "microphone_unavailable":
+      title = "Microphone disconnected";
+      body =
+        error.message ??
+        "Your microphone became unavailable. Check the browser permission or reconnect the device, then try again.";
+      break;
     case "ws_unrecoverable":
       if (code === "no_system_prompt") {
         title = "Interview isn't ready yet";

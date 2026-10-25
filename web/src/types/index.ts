@@ -225,6 +225,7 @@ export type InterviewErrorKind =
   | "load_failed"
   | "auth_failed"
   | "resume_unavailable"
+  | "microphone_unavailable"
   | "ws_unrecoverable"
   | "ws_connection_lost";
 
