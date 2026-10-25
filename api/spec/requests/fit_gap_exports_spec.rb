@@ -27,7 +27,12 @@ RSpec.describe 'Fit-gap exports', type: :request do
       portfolio = Portfolio.create!(session:, generation_status: 'complete')
       skill = portfolio.portfolio_skills.create!(
         skill_id: 'react', skill_label: 'React', ai_level: 2, ai_confidence: 'high',
-        evidence: [], competency_summary: 'Summary'
+        evidence: [{
+          'turn_id' => 42,
+          'turn_number' => 6,
+          'quote' => 'Canonical candidate evidence',
+          'verification_status' => 'verified'
+        }], competency_summary: 'Summary'
       )
       skill.create_assessor_override!(
         ai_level: 2, override_level: 3, overridden_by: user.id, overridden_at: Time.current
@@ -64,6 +69,9 @@ RSpec.describe 'Fit-gap exports', type: :request do
     expect(json['stale_export']).to be(false)
     expect(json.dig('fit_gap_report', 'freshness')).to eq('current')
     expect(json.dig('fit_gap_report', 'skill_comparisons', 0, 'rating_source')).to eq('assessor_override')
+    expect(json.dig('portfolio', 'skills', 0, 'evidence', 0, 'verification_status')).to eq('verified')
+    expect(json.dig('portfolio', 'skills', 0, 'evidence', 0, 'turn_number')).to eq(6)
+    expect(json.dig('portfolio', 'skills', 0, 'evidence_status')).to eq('verified')
   end
 
   it 'blocks updating and outdated reports' do

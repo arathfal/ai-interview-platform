@@ -178,6 +178,13 @@ RSpec.describe 'Portfolios API', type: :request do
       expect(json['portfolio']['generation_error']).to include('TypeScript')
       expect(json['portfolio']['skills'].length).to eq(1)
       expect(json['portfolio']['skills'].first['ai_confidence']).to eq('high')
+      expect(json['portfolio']['skills'].first['evidence']).to eq([{
+        'quote' => 'quote',
+        'turn_id' => nil,
+        'turn_number' => nil,
+        'verification_status' => 'legacy'
+      }])
+      expect(json['portfolio']['skills'].first['evidence_status']).to eq('legacy')
     end
   end
 end
